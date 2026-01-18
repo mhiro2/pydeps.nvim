@@ -1,0 +1,358 @@
+*pydeps.txt*  Python dependency explorer for Neovim
+
+==============================================================================
+CONTENTS                                                      *pydeps-contents*
+
+  1. Introduction ................................ |pydeps-introduction|
+  2. Requirements ................................ |pydeps-requirements|
+  3. Installation ................................ |pydeps-installation|
+  4. Setup ....................................... |pydeps-setup|
+  5. Commands .................................... |pydeps-commands|
+  6. Configuration ............................... |pydeps-config|
+  7. Completion .................................. |pydeps-completion|
+  8. Highlights .................................. |pydeps-highlights|
+  9. License ..................................... |pydeps-license|
+
+==============================================================================
+1. INTRODUCTION                                           *pydeps-introduction*
+
+pydeps.nvim is a crates.nvim-inspired dependency explorer for Python,
+focused on resolved dependencies, lockfiles, and real environments.
+
+Unlike requirements-centric plugins, pydeps.nvim treats lockfiles as
+first-class citizens and integrates directly with modern Python tooling
+such as `uv`.
+
+Key Features:
+  • Inline, section-aligned badges with icons (comment-aware)
+  • Lock mismatch detection (pinned version vs resolved version)
+  • Pin validation (checks if pinned versions exist on public PyPI)
+  • Environment-aware dependency evaluation (PEP 508 markers)
+  • Direct integration with uv (lock, tree)
+  • Dependency tree inspection ("why is this installed?")
+  • Lockfile diff view (before/after resolve)
+  • PyPI-aware dependency info and diagnostics
+  • Completion for packages, versions, extras, and groups
+
+Supported Files:
+  • pyproject.toml
+  • uv.lock
+
+==============================================================================
+2. REQUIREMENTS                                           *pydeps-requirements*
+
+Required:
+  • Neovim ≥ 0.10
+  • uv - https://docs.astral.sh/uv/
+  • nvim-treesitter with toml parser - for accurate inline badge alignment
+    (section-aware anchor column calculation and comment-aware positioning)
+
+Optional (but recommended):
+  • Python (python3 or python) - for environment detection
+  • curl or Python - for PyPI features (completion, info, diagnostics)
+
+==============================================================================
+3. INSTALLATION                                           *pydeps-installation*
+
+Using lazy.nvim: >lua
+  {
+    "mhiro2/pydeps.nvim",
+    config = function()
+      require("pydeps").setup()
+    end,
+  }
+<
+
+Using packer.nvim: >lua
+  use {
+    "mhiro2/pydeps.nvim",
+    config = function()
+      require("pydeps").setup()
+    end,
+  }
+<
+
+==============================================================================
+4. SETUP                                                         *pydeps-setup*
+
+pydeps.setup({opts})                                           *pydeps.setup()*
+    Configure pydeps.nvim.
+
+    Parameters: ~
+      {opts} (table|nil) Configuration options. See |pydeps-config|.
+
+    Example: >lua
+      require("pydeps").setup({
+        show_virtual_text = true,
+        enable_diagnostics = true,
+        enable_completion = true,
+      })
+<
+
+==============================================================================
+5. COMMANDS                                                   *pydeps-commands*
+
+:PyDepsToggle                                                  *:PyDepsToggle*
+    Toggle inline badges and diagnostics. This is the primary day-to-day
+    command.
+
+:PyDepsUpdate [package]                                        *:PyDepsUpdate*
+    Update a dependency to the latest PyPI version.
+      - If [package] is omitted and cursor is on a dependency, updates it.
+      - If [package] is provided, updates that package.
+      - If not on a dependency, prompts for a package name.
+
+:PyDepsResolve                                                *:PyDepsResolve*
+    Run `uv lock` to resolve dependencies. Shows a lockfile diff after
+    completion, comparing the previous snapshot with the current state.
+    With !, show diff only (no lock).
+
+:PyDepsWhy [package]                                              *:PyDepsWhy*
+    Show transitive dependency provenance ("why is this installed?").
+    If [package] is not provided and cursor is on a dependency, uses that
+    dependency. Otherwise prompts for a package name.
+
+:PyDepsInfo                                                      *:PyDepsInfo*
+    Show detailed information about the dependency under cursor:
+      • spec: Version constraint from pyproject.toml
+      • resolved: Version from uv.lock
+      • latest: Latest version from PyPI
+      • lock: Whether lock is up-to-date or out-of-date
+      • markers: PEP 508 marker expression (if present)
+      • group/extra: Dependency group or extra (if present)
+
+:PyDepsTree                                                      *:PyDepsTree*
+    Show dependency tree by running `uv tree`. (Optional)
+
+==============================================================================
+6. CONFIGURATION                                                *pydeps-config*
+
+Configuration options for |pydeps.setup()|:
+
+                                                    *pydeps-config-virtual-text*
+show_virtual_text                   (boolean, default: true)
+    Show virtual text with resolved versions.
+
+show_missing_virtual_text           (boolean, default: true)
+    Show virtual text for unresolved dependencies.
+
+show_missing_lockfile_virtual_text  (boolean, default: true)
+    Show virtual text when uv.lock is missing.
+
+missing_lockfile_virtual_text       (string, default: "missing uv.lock")
+    Text to display when lockfile is missing.
+
+                                                             *pydeps-config-ui*
+ui                                 (table)
+    Inline badge UI. Default: >lua
+      ui = {
+        enabled = true,
+        section_padding = 4,
+        icons = {
+          enabled = true,
+          searching = "",
+          loading   = "",
+          update = "",
+          ok = "",
+          inactive = "󰍶",
+          yanked = "󰀪",
+          lock_mismatch = "",
+          pin_not_found = "",
+          unknown = "󰋼",
+          package = "",
+          spec = "",
+          lock = "",
+          latest = "",
+          extras = "",
+          markers = "󰍶",
+          status = "",
+          deps = "",
+          pypi = "󰌠",
+          fallback = {
+            searching = "?",
+            loading = "~",
+            update = "^",
+            ok = "=",
+            inactive = "-",
+            yanked = "!",
+            lock_mismatch = "!",
+            pin_not_found = "x",
+            unknown = "?",
+          },
+        },
+        show = {
+          resolved = true,
+          latest = true,
+        },
+      }
+<
+    Badges align to the max spec end per section, with padding and comment
+    collision handling.
+
+    See |pydeps-highlights| for highlight group customization.
+
+    Set ui.enabled = false to disable inline badges.
+
+                                                      *pydeps-config-diagnostics*
+enable_diagnostics                  (boolean, default: true)
+    Enable diagnostic messages for dependencies.
+
+diagnostic_severity                 (table)
+    Severity levels for different diagnostic types: >lua
+      diagnostic_severity = {
+        yanked = vim.diagnostic.severity.WARN,
+        marker = vim.diagnostic.severity.WARN,
+        lock = vim.diagnostic.severity.WARN,
+      }
+<
+                                                             *pydeps-config-pypi*
+pypi_url                            (string, default: "https://pypi.org/pypi")
+    PyPI base URL for package information.
+
+pypi_cache_ttl                      (number, default: 3600)
+    Time to live for PyPI cache in seconds.
+
+                                                       *pydeps-config-completion*
+enable_completion                   (boolean, default: true)
+    Enable completion source registration.
+
+completion                          (table)
+    Completion configuration: >lua
+      completion = {
+        pypi_search = true,      -- Enable PyPI package search
+        pypi_search_min = 2,     -- Minimum characters to trigger search
+        max_results = 30,        -- Maximum number of results
+      }
+<
+                                                         *pydeps-config-behavior*
+auto_refresh                        (boolean, default: true)
+    Automatically refresh on buffer read/write and text changes.
+
+refresh_debounce_ms                 (number, default: 200)
+    Debounce duration (ms) for refresh on text changes. Set to 0 to refresh
+    immediately on each change.
+
+notify_on_missing_lockfile          (boolean, default: true)
+    Show notification when uv.lock is missing.
+
+info_window_border                  (string, default: "rounded")
+    Border style for info window (see |nvim_open_win()|).
+
+==============================================================================
+7. COMPLETION                                               *pydeps-completion*
+
+pydeps.nvim provides completion for:
+  • Package names (from PyPI search)
+  • Version constraints
+  • Extras (e.g., [dev,test])
+  • Dependency groups
+
+Completion types:~
+  • Package names: Type package name → PyPI search suggestions (min 2 chars)
+  • Versions: Type version constraint (>=, <, ~=, etc.) → PyPI release versions
+  • Extras: Type [ inside package spec → available extras from PyPI metadata
+    Example: somepackage[bcrypt,toml]
+  • Markers: Type ; for PEP 508 marker completion (extra, group, platform, etc.)
+
+Completion sources actual release versions and extras from PyPI metadata.
+
+nvim-cmp~
+>lua
+  require("cmp").setup({
+    sources = {
+      { name = "pydeps" },
+      -- other sources...
+    },
+  })
+<
+
+blink.cmp~
+>lua
+  require("blink.cmp").setup({
+    sources = {
+      default = { "pydeps" },
+    },
+    providers = {
+      pydeps = {
+        name = "pydeps",
+        module = "pydeps.completion.blink",
+      },
+    },
+  })
+<
+
+==============================================================================
+8. HIGHLIGHTS                                                 *pydeps-highlights*
+
+pydeps.nvim uses treesitter-based highlight groups for a modern, theme-
+consistent appearance. All highlights can be customized using |:highlight|.
+
+Info Window Highlights~
+                                                       *pydeps-highlights-info*
+
+PyDepsInfoPackage           Package name header (default: @keyword)
+PyDepsInfoDescription       Package description text (default: @comment)
+PyDepsInfoLabel             Field labels: spec, lock, latest, etc. (@property)
+PyDepsInfoValue             Generic values (default: @string)
+PyDepsInfoUrl               PyPI URL (default: @markup.link.url)
+PyDepsInfoVersion           Version numbers (default: @number.float)
+PyDepsInfoPill              Pill-style values like extras (default: fg #e0e0e0, bg #5a5a5a)
+
+PyDepsInfoStatusOk          "active" status (default: DiagnosticOk)
+PyDepsInfoStatusUpdate      "update available" status (default: DiagnosticWarn)
+PyDepsInfoStatusWarn        "lock mismatch" status (default: DiagnosticWarn)
+PyDepsInfoStatusError       "yanked" status (default: DiagnosticError)
+PyDepsInfoStatusInactive    "inactive" status (default: DiagnosticInfo)
+
+PyDepsInfoSuffixOk          "(up-to-date)" annotation (default: DiagnosticOk)
+PyDepsInfoSuffixWarn        "(update available)" annotation (DiagnosticWarn)
+PyDepsInfoSuffixInfo        "(loading...)" annotation (default: @comment)
+PyDepsInfoSuffixError       "(not found)" annotation (default: DiagnosticError)
+
+Virtual Text Highlights~
+                                                *pydeps-highlights-virtual-text*
+
+PyDepsOk                    Up-to-date package (default: DiagnosticOk)
+PyDepsUpdate                Minor update available (default: DiagnosticHint)
+PyDepsMajor                 Major update available (default: DiagnosticWarn)
+PyDepsYanked                Yanked package (default: DiagnosticError)
+PyDepsInactive              Inactive dependency (default: @comment)
+PyDepsLockMismatch          Lock mismatch (default: DiagnosticWarn)
+PyDepsPinNotFound           Pin not found (default: DiagnosticError)
+PyDepsUnknown               Unknown status (default: DiagnosticInfo)
+PyDepsResolved              Resolved version (default: @comment)
+PyDepsMissing               Missing dependency (default: DiagnosticWarn)
+PyDepsLabel                 Label text (default: @comment)
+PyDepsSearching             Searching status (default: DiagnosticInfo)
+PyDepsLoading               Loading status (default: DiagnosticHint)
+
+Tree Badge Highlights~
+                                                 *pydeps-highlights-tree-badges*
+
+PyDepsBadgeDirect           [direct] badge (default: @keyword)
+PyDepsBadgeTransitive       [transitive] badge (default: @comment)
+PyDepsBadgeGroup            Group badge (default: @type)
+PyDepsBadgeExtra            [extra:name] badge (default: @constant)
+
+Customization~
+
+Customize highlights after setup using |:highlight| or |vim.api.nvim_set_hl()|:
+>lua
+    -- Link to different highlight groups
+    vim.api.nvim_set_hl(0, "PyDepsInfoUrl", { link = "@markup.link.url" })
+
+    -- Set custom styles
+    vim.api.nvim_set_hl(0, "PyDepsInfoPackage", { link = "Title", bold = true })
+
+    -- Customize virtual text badges
+    vim.api.nvim_set_hl(0, "PyDepsOk", { link = "DiagnosticOk" })
+    vim.api.nvim_set_hl(0, "PyDepsUpdate", { link = "DiagnosticWarn" })
+<
+
+==============================================================================
+9. LICENSE                                                     *pydeps-license*
+
+MIT License
+
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:

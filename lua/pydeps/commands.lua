@@ -1,0 +1,588 @@
+local cache = require("pydeps.core.cache")
+local project = require("pydeps.core.project")
+local provenance = require("pydeps.core.provenance")
+local state = require("pydeps.core.state")
+local edit = require("pydeps.sources.pyproject_edit")
+local info = require("pydeps.ui.info")
+local lock_diff = require("pydeps.ui.lock_diff")
+local output = require("pydeps.ui.output")
+local pypi = require("pydeps.providers.pypi")
+local util = require("pydeps.util")
+
+local M = {}
+
+local provenance_ns = vim.api.nvim_create_namespace("pydeps-why")
+
+---@param buf integer
+---@param lines string[]
+---@return nil
+local function highlight_provenance(buf, lines)
+  if not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  vim.api.nvim_buf_clear_namespace(buf, provenance_ns, 0, -1)
+  for idx, line in ipairs(lines) do
+    local label = line:match("^([%a%s]+):%s")
+    if label then
+      local start_col = line:find(label, 1, true)
+      if start_col then
+        vim.api.nvim_buf_add_highlight(buf, provenance_ns, "Identifier", idx - 1, start_col - 1, start_col - 1 + #label)
+      end
+      if label == "Target" then
+        local value_start = line:find(": ", 1, true)
+        if value_start then
+          local col = value_start + 2
+          vim.api.nvim_buf_add_highlight(buf, provenance_ns, "Title", idx - 1, col - 1, #line)
+        end
+      end
+    end
+    if line:match("^Press q or <Esc> to close") then
+      vim.api.nvim_buf_add_highlight(buf, provenance_ns, "Comment", idx - 1, 0, #line)
+    end
+  end
+end
+
+-- Helper functions
+
+---@return integer
+local function current_buf()
+  return vim.api.nvim_get_current_buf()
+end
+
+---@param bufnr integer
+---@return boolean
+local function is_pyproject_buf(bufnr)
+  local name = vim.api.nvim_buf_get_name(bufnr)
+  return name:match("pyproject%.toml$") ~= nil
+end
+
+---@param bufnr integer
+---@return PyDepsDependency[]
+local function parse_buffer_deps(bufnr)
+  return cache.get_pyproject(bufnr)
+end
+
+---@param root string
+---@return nil
+local function show_lock_diff(root)
+  local snapshot = cache.get_lock_snapshot(root)
+  if not snapshot then
+    vim.notify("pydeps: no previous lockfile snapshot (run :PyDepsResolve first)", vim.log.levels.WARN)
+    return
+  end
+  local current, missing = cache.get_lockfile(root, { sync = true })
+  if missing then
+    vim.notify("pydeps: uv.lock not found", vim.log.levels.WARN)
+    return
+  end
+  lock_diff.show(snapshot, current.resolved or {}, { title = "PyDeps Lock Diff" })
+end
+
+---@param spec string
+---@return string
+local function normalize_spec(spec)
+  local req, marker = spec:match("^(.-)%s*;%s*(.+)$")
+  if not req then
+    req = spec
+  end
+  req = util.trim(req)
+  req = req:gsub("%s*,%s*", ",")
+  req = req:gsub("%s*([<>=!~]=?)%s*", "%1")
+  req = req:gsub("%s*%[%s*", "["):gsub("%s*%]%s*", "]")
+  if marker then
+    marker = util.trim(marker)
+    return req .. "; " .. marker
+  end
+  return req
+end
+
+---@param spec string
+---@param latest string
+---@return string
+local function update_version(spec, latest)
+  local req, marker = spec:match("^(.-)%s*;%s*(.+)$")
+  if not req then
+    req = spec
+  end
+  local name_part = req:match("^%s*([%w%._%-]+%s*%b[])")
+  local rest = nil
+  if name_part then
+    rest = req:sub(#name_part + 1)
+  else
+    name_part = req:match("^%s*([%w%._%-]+)")
+    rest = req:sub(#name_part + 1)
+  end
+  if not name_part then
+    return spec
+  end
+  -- Check for multiple constraints (e.g., ">=1.0,<2.0")
+  if rest:find(",") then
+    vim.notify("pydeps: multiple constraints detected in version spec; manual update recommended", vim.log.levels.WARN)
+    return spec
+  end
+  local op, version = rest:match("([<>=!~]=?)%s*([^,%s]+)")
+  if op and version then
+    rest = rest:gsub(op .. "%s*" .. version, op .. latest, 1)
+  else
+    rest = " >= " .. latest
+  end
+  local updated = util.trim(name_part .. " " .. util.trim(rest))
+  if marker then
+    updated = updated .. "; " .. util.trim(marker)
+  end
+  return normalize_spec(updated)
+end
+
+---@param bufnr integer
+---@param target string
+---@param deps PyDepsDependency[]
+---@return PyDepsDependency?
+local function find_dep_by_name(bufnr, target, deps)
+  for _, dep in ipairs(deps or {}) do
+    if dep.name == target then
+      return dep
+    end
+  end
+  if not is_pyproject_buf(bufnr) then
+    return nil
+  end
+  return nil
+end
+
+---@param spec string
+---@return boolean
+local function is_direct_reference(spec)
+  -- Direct reference with @ (e.g., package @ git+https://...)
+  if spec:find("%s@%s") or spec:find("^[%w%._%-]+@") then
+    return true
+  end
+  -- URL reference (https:// or http://)
+  if spec:match("https?://") then
+    return true
+  end
+  -- File path reference (file://)
+  if spec:match("file://") then
+    return true
+  end
+  -- Relative path (./ or ../)
+  if spec:match("%.%/") then
+    return true
+  end
+  return false
+end
+
+---@param bufnr integer
+---@param dep PyDepsDependency
+---@return nil
+local function update_dependency(bufnr, dep)
+  if is_direct_reference(dep.spec) then
+    vim.notify("pydeps: direct reference spec cannot be auto-updated: " .. dep.spec, vim.log.levels.WARN)
+    return
+  end
+
+  pypi.get(dep.name, function(meta)
+    if not meta or not meta.info or not meta.info.version then
+      vim.notify("pydeps: PyPI metadata not available", vim.log.levels.WARN)
+      return
+    end
+    local updated = update_version(dep.spec, meta.info.version)
+    edit.replace_dependency(bufnr, dep, updated)
+    state.refresh(bufnr)
+  end)
+end
+
+---@param bufnr integer
+---@param target? string
+---@param deps PyDepsDependency[]
+---@return PyDepsDependency?
+local function find_dependency_to_update(bufnr, target, deps)
+  -- If target specified, find by name
+  if target and target ~= "" then
+    local dep = find_dep_by_name(bufnr, target, deps)
+    if not dep then
+      vim.notify("pydeps: dependency not found: " .. target, vim.log.levels.WARN)
+    end
+    return dep
+  end
+
+  -- Otherwise, use dependency under cursor
+  local dep = util.dep_under_cursor(deps)
+  if dep then
+    return dep
+  end
+
+  -- Prompt for package name if no dependency found
+  vim.ui.input({ prompt = "pydeps: package name" }, function(input)
+    if input and input ~= "" then
+      local ok, err = pcall(M.update, input)
+      if not ok then
+        vim.notify(
+          string.format("pydeps: failed to update dependency: %s", err or "unknown error"),
+          vim.log.levels.ERROR
+        )
+      end
+    end
+  end)
+
+  return nil
+end
+
+---@param target? string
+---@return nil
+function M.update(target)
+  local bufnr = current_buf()
+  if not is_pyproject_buf(bufnr) then
+    vim.notify("pydeps: open pyproject.toml to update dependencies", vim.log.levels.WARN)
+    return
+  end
+
+  local deps = parse_buffer_deps(bufnr)
+  local dep = find_dependency_to_update(bufnr, target, deps)
+
+  if not dep then
+    return
+  end
+
+  update_dependency(bufnr, dep)
+end
+
+---@param opts? { diff_only?: boolean, root?: string }
+---@return nil
+function M.resolve(opts)
+  local bufnr = current_buf()
+  local root = (opts and opts.root) or project.find_root(bufnr)
+  if not root then
+    vim.notify("pydeps: project root not found", vim.log.levels.WARN)
+    return
+  end
+
+  if opts and opts.diff_only then
+    show_lock_diff(root)
+    state.refresh_all()
+    return
+  end
+
+  local before = cache.get_lockfile(root, { sync = true })
+  cache.set_lock_snapshot(root, before.resolved or {})
+  require("pydeps.providers.uv").resolve({
+    root = root,
+    on_exit = function()
+      cache.invalidate_lockfile(root)
+      local after, missing = cache.get_lockfile(root, { sync = true })
+      if missing then
+        vim.notify("pydeps: uv.lock not found after resolve", vim.log.levels.WARN)
+      else
+        lock_diff.show(before.resolved or {}, after.resolved or {}, { title = "PyDeps Lock Diff" })
+        cache.set_lock_snapshot(root, after.resolved or {})
+      end
+      state.refresh_all()
+    end,
+  })
+end
+
+-- Tree helper functions (must be defined before M.tree)
+
+---@param uv table
+---@param uv_args string[]
+---@param flag_name string
+---@param primary_args string[]
+---@param fallback_args? string[]
+---@return boolean
+local function add_if_supported(uv, uv_args, flag_name, primary_args, fallback_args)
+  if uv.supports_tree_flag(flag_name) then
+    vim.list_extend(uv_args, primary_args)
+    return true
+  elseif fallback_args then
+    vim.list_extend(uv_args, fallback_args)
+    return true
+  else
+    vim.notify("pydeps: --" .. flag_name .. " not supported by this uv version", vim.log.levels.WARN)
+    return false
+  end
+end
+
+---@param tree_args table
+---@param target? string
+---@return string[]
+local function build_tree_args(tree_args, target)
+  local uv = require("pydeps.providers.uv")
+  local uv_args = { "tree" }
+
+  -- Add target package if specified
+  if target then
+    add_if_supported(uv, uv_args, "package", { "--package", target }, { target })
+  end
+
+  -- Add optional flags
+  if tree_args.depth then
+    add_if_supported(uv, uv_args, "depth", { "--depth", tostring(tree_args.depth) })
+  end
+  if tree_args.invert then
+    add_if_supported(uv, uv_args, "invert", { "--invert" })
+  end
+  if tree_args.universal then
+    add_if_supported(uv, uv_args, "universal", { "--universal" })
+  end
+  if tree_args.show_sizes then
+    add_if_supported(uv, uv_args, "show_sizes", { "--show-sizes" })
+  end
+  if tree_args.all_groups then
+    add_if_supported(uv, uv_args, "all_groups", { "--all-groups" })
+  end
+
+  -- Add group filters
+  for _, group in ipairs(tree_args.groups or {}) do
+    if not add_if_supported(uv, uv_args, "group", { "--group", group }) then
+      break
+    end
+  end
+
+  for _, group in ipairs(tree_args.no_groups or {}) do
+    if not add_if_supported(uv, uv_args, "no_group", { "--no-group", group }) then
+      break
+    end
+  end
+
+  return uv_args
+end
+
+---@param bufnr integer
+---@param tree_args table
+---@param args_str string
+---@param opts table
+---@return string?
+local function resolve_tree_target(bufnr, tree_args, args_str, opts)
+  local target = tree_args.target
+
+  if not target then
+    -- Try cursor dependency
+    local deps = parse_buffer_deps(bufnr)
+    local dep = util.dep_under_cursor(deps)
+    target = dep and dep.name
+  end
+
+  -- Handle --reverse without target
+  if tree_args.reverse and not target then
+    vim.ui.input({ prompt = "pydeps: package name for reverse tree" }, function(input)
+      if input and input ~= "" then
+        M.tree("--package " .. input .. " " .. args_str, false, opts)
+      end
+    end)
+    return nil
+  end
+
+  return target
+end
+
+---@param args_str string
+---@param bang boolean
+---@param opts? { anchor?: "center"|"cursor"|"hover", mode?: "split"|"float", width?: integer, height?: integer }
+function M.tree(args_str, bang, opts)
+  local uv = require("pydeps.providers.uv")
+  if not uv.tree_features_ready() then
+    uv.detect_tree_features(function()
+      vim.schedule(function()
+        M.tree(args_str, bang, opts)
+      end)
+    end)
+    vim.notify("pydeps: detecting uv tree features...", vim.log.levels.INFO)
+    return
+  end
+
+  local tree_args = require("pydeps.core.tree_args").parse(args_str, bang)
+  local bufnr = current_buf()
+  local root = project.find_root(bufnr)
+  if not root then
+    vim.notify("pydeps: project root not found", vim.log.levels.WARN)
+    return
+  end
+
+  -- Resolve target: explicit flag -> positional -> cursor -> nil
+  local target = resolve_tree_target(bufnr, tree_args, args_str, opts)
+  if not target and tree_args.reverse then
+    return
+  end
+
+  -- Build uv args with feature detection
+  local uv_args = build_tree_args(tree_args, target)
+
+  uv.tree({
+    root = root,
+    args = uv_args,
+    anchor = opts and opts.anchor,
+    mode = opts and opts.mode,
+    width = opts and opts.width,
+    height = opts and opts.height,
+  })
+end
+
+---@param target? string
+---@return nil
+function M.provenance(target)
+  local bufnr = current_buf()
+  if not is_pyproject_buf(bufnr) and not target then
+    vim.notify("pydeps: open pyproject.toml or pass a package name", vim.log.levels.WARN)
+    return
+  end
+  local root = project.find_root(bufnr)
+  if not root then
+    vim.notify("pydeps: project root not found", vim.log.levels.WARN)
+    return
+  end
+  local deps = parse_buffer_deps(bufnr)
+  local dep = target and { name = target } or util.dep_under_cursor(deps)
+  if not dep then
+    vim.ui.input({ prompt = "pydeps: package name" }, function(input)
+      if input and input ~= "" then
+        local ok, err = pcall(M.provenance, input)
+        if not ok then
+          vim.notify(
+            string.format("pydeps: failed to show provenance: %s", err or "unknown error"),
+            vim.log.levels.ERROR
+          )
+        end
+      end
+    end)
+    return
+  end
+
+  local lock_data, missing = cache.get_lockfile(root, { sync = true })
+  if missing then
+    vim.notify("pydeps: uv.lock not found", vim.log.levels.WARN)
+    return
+  end
+
+  local roots = {}
+  local root_labels = {}
+  local seen = {}
+  for _, entry in ipairs(deps or {}) do
+    if not seen[entry.name] then
+      seen[entry.name] = true
+      table.insert(roots, entry.name)
+      local label = (entry.group and entry.group ~= "" and entry.group ~= "project") and entry.group or "project"
+      root_labels[entry.name] = label
+    end
+  end
+
+  local graph = lock_data.graph or {}
+  local reachable = provenance.roots_reaching_target(graph, roots, dep.name)
+
+  local lines = { "Target: " .. dep.name }
+  local direct_label = root_labels[dep.name]
+  if direct_label then
+    if direct_label ~= "project" then
+      table.insert(lines, ("Direct: yes (%s)"):format(direct_label))
+    else
+      table.insert(lines, "Direct: yes")
+    end
+  else
+    table.insert(lines, "Direct: no")
+  end
+
+  local total_paths = 0
+  local group_counts = {}
+  local label_order = {}
+  local label_seen = {}
+  for _, root_name in ipairs(roots) do
+    if reachable[root_name] then
+      total_paths = total_paths + 1
+      local label = root_labels[root_name] or "project"
+      group_counts[label] = (group_counts[label] or 0) + 1
+      if not label_seen[label] then
+        label_seen[label] = true
+        table.insert(label_order, label)
+      end
+    end
+  end
+
+  if total_paths == 0 then
+    table.insert(lines, "No path from active roots.")
+  else
+    local parts = {}
+    if label_seen["project"] then
+      table.insert(parts, ("project(%d)"):format(group_counts["project"]))
+    end
+    for _, label in ipairs(label_order) do
+      if label ~= "project" then
+        table.insert(parts, ("%s(%d)"):format(label, group_counts[label]))
+      end
+    end
+    table.insert(lines, ("Roots with path: %d (%s)"):format(total_paths, table.concat(parts, ", ")))
+
+    local display_limit = 5
+    local shown = math.min(display_limit, total_paths)
+    table.insert(lines, ("Paths (showing %d/%d):"):format(shown, total_paths))
+
+    local shown_paths = 0
+    for _, root_name in ipairs(roots) do
+      if reachable[root_name] then
+        local path = provenance.find_path(graph, root_name, dep.name)
+        if path then
+          local head = path[1]
+          local label = root_labels[head]
+          if label and label ~= "project" then
+            path = vim.deepcopy(path)
+            path[1] = ("%s [%s]"):format(head, label)
+          end
+          table.insert(lines, "  - " .. table.concat(path, " -> "))
+          shown_paths = shown_paths + 1
+          if shown_paths >= display_limit then
+            break
+          end
+        end
+      end
+    end
+    if total_paths > display_limit then
+      table.insert(lines, ("  ... and %d more"):format(total_paths - display_limit))
+    end
+  end
+
+  table.insert(lines, "")
+  table.insert(lines, "Press q or <Esc> to close")
+
+  info.suspend_close()
+  local ok, err = pcall(output.show, "PyDeps Why: " .. dep.name, lines, {
+    mode = "float",
+    anchor = "hover",
+    highlight = highlight_provenance,
+    on_close = function()
+      info.resume_close()
+    end,
+  })
+  if not ok then
+    info.resume_close()
+    error(err)
+  end
+end
+
+---@return nil
+function M.info()
+  local bufnr = current_buf()
+  if not is_pyproject_buf(bufnr) then
+    vim.notify("pydeps: open pyproject.toml to inspect dependencies", vim.log.levels.WARN)
+    return
+  end
+
+  local deps = parse_buffer_deps(bufnr)
+  local target = util.dep_under_cursor(deps)
+
+  local root = project.find_root(bufnr)
+  local resolved = {}
+  local missing_lockfile = false
+  if root then
+    local lock_data, missing, loading = cache.get_lockfile(root)
+    resolved = lock_data.resolved or {}
+    missing_lockfile = missing
+    if loading then
+      missing_lockfile = false
+    end
+  end
+  info.show(target, target and resolved[target.name] or nil, { lockfile_missing = missing_lockfile })
+end
+
+---@return nil
+function M.toggle()
+  state.toggle()
+end
+
+return M
