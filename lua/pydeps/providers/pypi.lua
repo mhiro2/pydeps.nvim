@@ -161,10 +161,12 @@ local function run_request(cmd, name)
     end
     local callbacks = pending[normalized] or {}
     pending[normalized] = nil
-    for _, cb in ipairs(callbacks) do
-      cb(decoded)
-    end
-    emit_update(name)
+    vim.schedule(function()
+      for _, cb in ipairs(callbacks) do
+        cb(decoded)
+      end
+      emit_update(name)
+    end)
   end
 
   local job_id = vim.fn.jobstart(cmd, {
