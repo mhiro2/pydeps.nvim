@@ -308,6 +308,11 @@ local function build_tree_args(tree_args, target)
   local uv = require("pydeps.providers.uv")
   local uv_args = { "tree" }
 
+  -- Add --frozen flag if supported and enabled
+  if tree_args.frozen and uv.supports_tree_flag("frozen") then
+    vim.list_extend(uv_args, { "--frozen" })
+  end
+
   -- Add target package if specified
   if target then
     add_if_supported(uv, uv_args, "package", { "--package", target }, { target })
@@ -395,6 +400,21 @@ function M.tree(args_str, bang, opts)
   if not root then
     vim.notify("pydeps: project root not found", vim.log.levels.WARN)
     return
+  end
+
+  -- Validate lock file exists when in frozen mode
+  if tree_args.frozen then
+    local uv_mod = require("pydeps.providers.uv")
+    if uv_mod.supports_tree_flag("frozen") then
+      local _, missing = cache.get_lockfile(root, { sync = true })
+      if missing then
+        vim.notify(
+          "pydeps: uv.lock not found. Run :PyDepsResolve first, or use --resolve to skip frozen mode.",
+          vim.log.levels.WARN
+        )
+        return
+      end
+    end
   end
 
   -- Resolve target: explicit flag -> positional -> cursor -> nil

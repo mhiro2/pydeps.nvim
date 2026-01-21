@@ -240,7 +240,8 @@ require("blink.cmp").setup({
   - `:PyDepsResolve!` shows diff only (no lock)
 - `:PyDepsWhy [package]` — show transitive provenance for dependency
 - `:PyDepsInfo` — inspect dependency under cursor
-- `:PyDepsTree` — show dependency tree (optional)
+- `:PyDepsTree` — show dependency tree (uses `--frozen` by default)
+  - `:PyDepsTree --resolve` skips frozen mode and attempts dependency resolution
 
 Run `:checkhealth pydeps` to verify your setup.
 

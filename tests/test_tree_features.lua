@@ -69,6 +69,9 @@ T["feature detection returns boolean for known flags"] = function()
 
   local package = uv.supports_tree_flag("package")
   MiniTest.expect.equality(type(package), "boolean")
+
+  local frozen = uv.supports_tree_flag("frozen")
+  MiniTest.expect.equality(type(frozen), "boolean")
 end
 
 T["feature detection skips uv tree --help when uv not found"] = function()

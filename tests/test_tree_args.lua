@@ -8,6 +8,7 @@ T["parse empty args"] = function()
   MiniTest.expect.equality(result.target, nil)
   MiniTest.expect.equality(result.depth, nil)
   MiniTest.expect.equality(result.reverse, false)
+  MiniTest.expect.equality(result.frozen, true)
 end
 
 T["parse --package flag"] = function()
@@ -126,6 +127,35 @@ end
 T["parse with single quoted package name"] = function()
   local result = tree_args.parse("--package 'some-package'", false)
   MiniTest.expect.equality(result.target, "some-package")
+end
+
+T["frozen is true by default"] = function()
+  local result = tree_args.parse("", false)
+  MiniTest.expect.equality(result.frozen, true)
+end
+
+T["parse --resolve flag disables frozen"] = function()
+  local result = tree_args.parse("--resolve", false)
+  MiniTest.expect.equality(result.frozen, false)
+end
+
+T["parse --resolve with other flags"] = function()
+  local result = tree_args.parse("--resolve --depth 3", false)
+  MiniTest.expect.equality(result.frozen, false)
+  MiniTest.expect.equality(result.depth, 3)
+end
+
+T["parse --resolve with package"] = function()
+  local result = tree_args.parse("--package requests --resolve", false)
+  MiniTest.expect.equality(result.frozen, false)
+  MiniTest.expect.equality(result.target, "requests")
+end
+
+T["frozen remains true without --resolve"] = function()
+  local result = tree_args.parse("--package requests --depth 2", false)
+  MiniTest.expect.equality(result.frozen, true)
+  MiniTest.expect.equality(result.target, "requests")
+  MiniTest.expect.equality(result.depth, 2)
 end
 
 return T

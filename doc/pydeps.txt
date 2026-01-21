@@ -121,8 +121,33 @@ pydeps.setup({opts})                                           *pydeps.setup()*
       • markers: PEP 508 marker expression (if present)
       • group/extra: Dependency group or extra (if present)
 
-:PyDepsTree                                                      *:PyDepsTree*
-    Show dependency tree by running `uv tree`. (Optional)
+:PyDepsTree [options]                                            *:PyDepsTree*
+    Show dependency tree by running `uv tree`.
+
+    By default, runs with `--frozen` flag, which uses the existing lockfile
+    without attempting dependency resolution. This allows viewing the tree
+    even when some dependencies are unresolved or unavailable.
+
+    Options:~
+      --resolve           Skip frozen mode and attempt dependency resolution.
+                          Use this when you want uv to resolve dependencies.
+      --package {name}    Show tree for a specific package.
+      --depth {n}         Limit tree depth.
+      --reverse           Show reverse dependencies (what depends on this).
+      --universal         Show universal tree (all platforms/versions).
+      --show-sizes        Show package sizes.
+      --group {name}      Include specific dependency group.
+      --no-group {name}   Exclude specific dependency group.
+      --all-groups        Include all dependency groups.
+
+    Examples:~
+      :PyDepsTree                  Show tree using lockfile (frozen mode)
+      :PyDepsTree --resolve        Show tree with dependency resolution
+      :PyDepsTree --package rich   Show tree for 'rich' package
+      :PyDepsTree! rich            Show reverse deps for 'rich' (bang = invert)
+
+    If uv.lock is missing and frozen mode is active, a warning is shown
+    suggesting to run :PyDepsResolve or use --resolve flag.
 
 ==============================================================================
 6. CONFIGURATION                                                *pydeps-config*

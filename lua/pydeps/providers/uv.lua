@@ -141,6 +141,7 @@ function M.detect_tree_features(cb)
       group = stdout:match("%-%-group") ~= nil,
       no_group = stdout:match("%-%-no%-group") ~= nil,
       package = stdout:match("%-%-package") ~= nil,
+      frozen = stdout:match("%-%-frozen") ~= nil,
     }
     features_cached = true
     features_pending = false
