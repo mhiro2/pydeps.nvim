@@ -7,6 +7,24 @@ Lockfile-first dependency explorer for Python — focused on **resolved versions
 
 pydeps.nvim treats **lockfiles as first-class citizens** and integrates directly with modern Python tooling such as `uv`.
 
+## 🎬 Demo
+
+### Inline Badges
+
+![Inline Badges](./assets/inline-badges.png)
+
+### `:PyDepsInfo`
+
+![PyDepsInfo](./assets/pydeps-info.png)
+
+### `:PyDepsTree`
+
+![PyDepsTree](./assets/pydeps-tree.png)
+
+### Completion
+
+![Completion](./assets/completion.png)
+
 ## 💡 Why pydeps.nvim?
 
 Most Python dependency plugins answer:
