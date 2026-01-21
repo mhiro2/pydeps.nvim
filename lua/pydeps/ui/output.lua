@@ -151,18 +151,43 @@ function M.show(title, lines, opts)
       border = opts.border or "rounded",
     })
     vim.api.nvim_win_set_option(win, "wrap", false)
+
+    -- Ensure focus is moved to the float window
+    if enter then
+      vim.api.nvim_set_current_win(win)
+    end
+
+    local closed = false
     local function close()
+      if closed then
+        return
+      end
+      closed = true
       if vim.api.nvim_win_is_valid(win) then
         vim.api.nvim_win_close(win, true)
       end
+      if opts.on_close then
+        opts.on_close()
+      end
     end
+
     vim.keymap.set("n", "q", close, { buffer = buf, nowait = true, silent = true })
     vim.keymap.set("n", "<Esc>", close, { buffer = buf, nowait = true, silent = true })
-    vim.api.nvim_create_autocmd("WinClosed", {
-      pattern = tostring(win),
+
+    -- Close window when focus leaves
+    vim.api.nvim_create_autocmd("WinLeave", {
+      buffer = buf,
+      once = true,
+      callback = close,
+    })
+
+    -- Call on_close when buffer is wiped
+    vim.api.nvim_create_autocmd("BufWipeout", {
+      buffer = buf,
       once = true,
       callback = function()
-        if opts.on_close then
+        if not closed and opts.on_close then
+          closed = true
           opts.on_close()
         end
       end,

@@ -543,6 +543,25 @@ local function build_lines(dep, resolved, opts, meta)
   return lines
 end
 
+---Set up keybindings on the hover buffer itself
+---@return nil
+local function setup_hover_buffer_keymaps()
+  if not resources.buf_id or not vim.api.nvim_buf_is_valid(resources.buf_id) then
+    return
+  end
+
+  -- Close keymaps on hover buffer (in case focus moves there)
+  vim.keymap.set("n", "q", M.close_hover, { buffer = resources.buf_id, nowait = true, silent = true })
+  vim.keymap.set("n", "<Esc>", M.close_hover, { buffer = resources.buf_id, nowait = true, silent = true })
+
+  -- Close when leaving the hover window
+  vim.api.nvim_create_autocmd("WinLeave", {
+    buffer = resources.buf_id,
+    once = true,
+    callback = M.close_hover,
+  })
+end
+
 ---Set up keybindings for the source buffer while the hover is open
 ---@param dep PyDepsDependency
 ---@param source_buf integer
@@ -657,6 +676,7 @@ function M.show(dep, resolved, opts)
 
   local source_buf = vim.api.nvim_get_current_buf()
   setup_hover_keybindings(dep, source_buf)
+  setup_hover_buffer_keymaps()
 
   -- Calculate status for highlighting
   local root = opts and opts.root
@@ -789,6 +809,7 @@ function M.show_at_cursor()
   vim.api.nvim_set_option_value("wrap", false, { win = resources.win_id })
 
   setup_hover_keybindings(dep, bufnr)
+  setup_hover_buffer_keymaps()
 
   -- Calculate status for highlighting
   local status = determine_status(dep, resolved_version, nil, root)
