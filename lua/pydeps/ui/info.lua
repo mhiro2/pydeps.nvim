@@ -46,8 +46,17 @@ local function cleanup_all_resources()
     -- Restore saved keymaps
     if resources.saved_keymaps then
       for key, saved in pairs(resources.saved_keymaps) do
-        if saved.rhs then
-          pcall(vim.keymap.set, "n", key, saved.rhs, saved.opts)
+        local rhs = saved.callback or saved.rhs
+        if rhs then
+          pcall(vim.keymap.set, "n", key, rhs, {
+            buffer = resources.keymap_buf,
+            expr = saved.expr == 1,
+            noremap = saved.noremap == 1,
+            nowait = saved.nowait == 1,
+            silent = saved.silent == 1,
+            script = saved.script == 1,
+            desc = saved.desc,
+          })
         end
       end
       resources.saved_keymaps = nil
@@ -572,23 +581,11 @@ local function setup_hover_keybindings(dep, source_buf)
 
   -- Save existing keybindings before overriding
   local keys_to_save = { "<CR>", "gT" }
+  local keymaps = vim.api.nvim_buf_get_keymap(source_buf, "n")
   for _, key in ipairs(keys_to_save) do
-    local keymaps = vim.api.nvim_buf_get_keymap(source_buf, "n")
     for _, keymap in ipairs(keymaps) do
       if keymap.lhs == key then
-        resources.saved_keymaps[key] = {
-          lhs = keymap.lhs,
-          rhs = keymap.rhs or keymap.callback,
-          opts = {
-            expr = keymap.expr == 1,
-            noremap = keymap.noremap == 1,
-            nowait = keymap.nowait == 1,
-            silent = keymap.silent == 1,
-            script = keymap.script == 1,
-            buffer = source_buf,
-            desc = keymap.desc,
-          },
-        }
+        resources.saved_keymaps[key] = keymap
         break
       end
     end
