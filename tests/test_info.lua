@@ -304,6 +304,54 @@ T["info.show_at_cursor() sets up keybindings"] = function()
   info.close_hover()
 end
 
+T["info.close_hover() restores pre-existing buffer keymaps"] = function()
+  stub_pypi()
+  stub_cache()
+  package.loaded["pydeps.ui.info"] = nil
+  local info = require("pydeps.ui.info")
+
+  helpers.setup_buffer({
+    "[project]",
+    'dependencies = ["testpkg>=1.0"]',
+  })
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.bo[bufnr].filetype = "toml"
+
+  -- Set up a callback-based keymap before hover
+  vim.keymap.set("n", "<CR>", function() end, {
+    buffer = bufnr,
+    desc = "original-CR-mapping",
+    script = true,
+  })
+
+  local dep = { name = "testpkg", line = 2, col_start = 3, col_end = 10, spec = ">=1.0" }
+
+  -- Open hover (overrides <CR>)
+  info.show(dep, "1.0.0", {})
+  vim.wait(100)
+
+  -- Close hover (should restore original <CR>)
+  info.close_hover()
+
+  -- Verify original keymap is restored
+  local maps = vim.api.nvim_buf_get_keymap(bufnr, "n")
+  local restored = false
+  for _, map in ipairs(maps) do
+    if
+      map.lhs == "<CR>"
+      and map.desc == "original-CR-mapping"
+      and type(map.callback) == "function"
+      and map.script == 1
+    then
+      restored = true
+      break
+    end
+  end
+
+  MiniTest.expect.equality(restored, true)
+end
+
 T["info determines unknown status when package not found on PyPI"] = function()
   -- Stub PyPI to return nil (package not found)
   package.loaded["pydeps.providers.pypi"] = {
