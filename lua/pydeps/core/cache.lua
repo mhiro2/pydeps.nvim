@@ -1,6 +1,7 @@
 local lockfile = require("pydeps.sources.lockfile")
 local project = require("pydeps.core.project")
 local pyproject = require("pydeps.sources.pyproject")
+local util = require("pydeps.util")
 local uv = vim.uv
 
 local M = {}
@@ -52,12 +53,7 @@ local function emit_lockfile_update(root, path)
   if not root or root == "" then
     return
   end
-  vim.schedule(function()
-    pcall(vim.api.nvim_exec_autocmds, "User", {
-      pattern = "PyDepsLockfileUpdated",
-      data = { root = root, path = path },
-    })
-  end)
+  util.emit_user_autocmd("PyDepsLockfileUpdated", { root = root, path = path })
 end
 
 ---@param root string
