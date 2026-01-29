@@ -26,6 +26,8 @@ local T = MiniTest.new_set({
         find_root = function()
           return "/tmp"
         end,
+        clear_cache = function() end,
+        clear_all_caches = function() end,
       }
       package.loaded["pydeps.ui.virtual_text"] = {
         ns = vim.api.nvim_create_namespace("pydeps-test-vt"),

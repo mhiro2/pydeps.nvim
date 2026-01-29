@@ -175,6 +175,18 @@ local function ensure_autocmds()
       virtual_text.clear_debounce_state(args.buf)
     end,
   })
+  vim.api.nvim_create_autocmd({ "BufWipeout", "BufFilePost" }, {
+    group = augroup_id,
+    callback = function(args)
+      require("pydeps.core.project").clear_cache(args.buf)
+    end,
+  })
+  vim.api.nvim_create_autocmd("BufReadPost", {
+    group = augroup_id,
+    callback = function(args)
+      require("pydeps.core.project").clear_cache(args.buf)
+    end,
+  })
   vim.api.nvim_create_autocmd("BufWritePost", {
     group = augroup_id,
     pattern = "uv.lock",
