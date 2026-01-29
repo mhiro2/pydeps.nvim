@@ -156,9 +156,6 @@ pydeps.nvim is configurable via `require("pydeps").setup({ ... })`.
     pypi_search_min = 2,
     max_results = 30,
   },
-  tree = {
-    depth = 255,
-  },
 }
 ```
 

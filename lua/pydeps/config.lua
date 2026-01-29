@@ -18,7 +18,6 @@
 ---@field pypi_cache_ttl integer
 ---@field enable_completion boolean
 ---@field completion PyDepsCompletionConfig
----@field tree PyDepsTreeConfig
 
 ---@class PyDepsDiagnosticSeverity
 ---@field yanked integer
@@ -29,9 +28,6 @@
 ---@field pypi_search boolean
 ---@field pypi_search_min integer
 ---@field max_results integer
-
----@class PyDepsTreeConfig
----@field depth integer
 
 ---@class PyDepsUiIconConfig
 ---@field enabled boolean
@@ -153,9 +149,6 @@ M.defaults = {
     pypi_search_min = 2,
     max_results = 30,
   },
-  tree = {
-    depth = 255,
-  },
 }
 
 ---@type PyDepsConfig
@@ -185,7 +178,6 @@ local function validate_top_level(opts)
     enable_completion = { opts.enable_completion, "boolean", true },
     diagnostic_severity = { opts.diagnostic_severity, "table", true },
     completion = { opts.completion, "table", true },
-    tree = { opts.tree, "table", true },
   })
 end
 
@@ -204,13 +196,6 @@ local function validate_completion(completion)
     pypi_search = { completion.pypi_search, "boolean", true },
     pypi_search_min = { completion.pypi_search_min, "number", true },
     max_results = { completion.max_results, "number", true },
-  })
-end
-
----@param tree table
-local function validate_tree(tree)
-  vim.validate({
-    depth = { tree.depth, "number", true },
   })
 end
 
@@ -297,9 +282,6 @@ function M.setup(opts)
   end
   if opts.completion then
     validate_completion(opts.completion)
-  end
-  if opts.tree then
-    validate_tree(opts.tree)
   end
   if opts.ui then
     validate_ui(opts.ui)
