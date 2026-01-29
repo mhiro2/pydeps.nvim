@@ -115,6 +115,45 @@ T["parse_buffer handles dependency-groups"] = function()
   vim.api.nvim_buf_delete(bufnr, { force = true })
 end
 
+T["parse_buffer comment_col matches get_comment_col"] = function()
+  if not is_treesitter_available() then
+    MiniTest.skip("Tree-sitter toml parser not available")
+    return
+  end
+
+  local ts_toml = require("pydeps.treesitter.toml")
+
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
+    "[project]",
+    "dependencies = [",
+    '  "requests>=2.0", # http client',
+    '  "rich",',
+    '  "click>=8.0", # cli framework',
+    "]",
+  })
+  vim.bo[bufnr].filetype = "toml"
+
+  local deps = ts_toml.parse_buffer(bufnr)
+
+  -- requests (line 3, 0-indexed 2) has a comment
+  MiniTest.expect.equality(deps[1].name, "requests")
+  local expected1 = ts_toml.get_comment_col(bufnr, 2)
+  MiniTest.expect.equality(deps[1].comment_col, expected1)
+
+  -- rich (line 4, 0-indexed 3) has no comment
+  MiniTest.expect.equality(deps[2].name, "rich")
+  local expected2 = ts_toml.get_comment_col(bufnr, 3)
+  MiniTest.expect.equality(deps[2].comment_col, expected2)
+
+  -- click (line 5, 0-indexed 4) has a comment
+  MiniTest.expect.equality(deps[3].name, "click")
+  local expected3 = ts_toml.get_comment_col(bufnr, 4)
+  MiniTest.expect.equality(deps[3].comment_col, expected3)
+
+  vim.api.nvim_buf_delete(bufnr, { force = true })
+end
+
 T["get_section_ranges identifies table sections"] = function()
   if not is_treesitter_available() then
     MiniTest.skip("Tree-sitter toml parser not available")

@@ -8,29 +8,30 @@ local tree_ns = vim.api.nvim_create_namespace("pydeps-tree")
 local project = require("pydeps.core.project")
 
 ---@param root string
----@return table<string, boolean>
+---@return table<string, boolean> direct_deps
+---@return PyDepsDependency[] deps_list
 local function build_direct_deps(root)
   local pyproject_path = vim.fs.joinpath(root, "pyproject.toml")
   local pyproject = require("pydeps.sources.pyproject")
-  local deps = pyproject.parse(pyproject_path)
+  local deps_list = pyproject.parse(pyproject_path)
   local direct_deps = {}
-  for _, dep in ipairs(deps) do
+  for _, dep in ipairs(deps_list) do
     direct_deps[dep.name] = true
   end
-  return direct_deps
+  return direct_deps, deps_list
 end
 
 ---@param lines string[]
----@param root string
----@param direct_deps table<string, boolean>?
+---@param direct_deps table<string, boolean>
+---@param deps_list PyDepsDependency[]
 ---@return table<integer, PyDepsTreeBadge[]>
-local function build_badges_for_lines(lines, root, direct_deps)
+local function build_badges_for_lines(lines, direct_deps, deps_list)
   local badges = require("pydeps.core.tree_badges")
   local packages = M.extract_packages(lines)
   local result = {}
 
   for line_num, package_name in pairs(packages) do
-    local pkg_info = badges.get_package_info(root, package_name, direct_deps)
+    local pkg_info = badges.get_package_info(package_name, direct_deps, deps_list)
     result[line_num] = badges.build_badges(pkg_info)
   end
 
@@ -55,12 +56,12 @@ local function calc_badge_width(badge_list)
 end
 
 ---@param lines string[]
----@param root string
 ---@param direct_deps table<string, boolean>?
+---@param deps_list PyDepsDependency[]?
 ---@return integer
-function M.estimate_width(lines, root, direct_deps)
-  if not root then
-    -- No badges without root, just return max line width
+function M.estimate_width(lines, direct_deps, deps_list)
+  if not direct_deps or not deps_list then
+    -- No badges without deps info, just return max line width
     local width = 0
     for _, line in ipairs(lines) do
       width = math.max(width, vim.fn.strdisplaywidth(line))
@@ -68,8 +69,7 @@ function M.estimate_width(lines, root, direct_deps)
     return width + 2 -- padding
   end
 
-  direct_deps = direct_deps or build_direct_deps(root)
-  local badges_by_line = build_badges_for_lines(lines, root, direct_deps)
+  local badges_by_line = build_badges_for_lines(lines, direct_deps, deps_list)
 
   local max_width = 0
   for line_num, line in ipairs(lines) do
@@ -117,11 +117,11 @@ end
 
 ---@param buf integer
 ---@param lines string[]
----@param root string
 ---@param direct_deps table<string, boolean>
+---@param deps_list PyDepsDependency[]
 ---@return nil
-function M.add_badges(buf, lines, root, direct_deps)
-  local badges_by_line = build_badges_for_lines(lines, root, direct_deps)
+function M.add_badges(buf, lines, direct_deps, deps_list)
+  local badges_by_line = build_badges_for_lines(lines, direct_deps, deps_list)
 
   for line_num, badge_list in pairs(badges_by_line) do
     local badge_texts = {}
@@ -194,8 +194,8 @@ function M.setup_keymaps(buf, lines, opts)
 
   -- Add badges if root provided
   if opts.root then
-    local direct_deps = build_direct_deps(opts.root)
-    M.add_badges(buf, lines, opts.root, direct_deps)
+    local direct_deps, deps_list = build_direct_deps(opts.root)
+    M.add_badges(buf, lines, direct_deps, deps_list)
   end
 
   -- Setup cleanup on buffer wipe

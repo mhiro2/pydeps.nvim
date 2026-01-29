@@ -131,51 +131,43 @@ T["get_package_info marks direct packages correctly"] = function()
     ["requests"] = true,
     ["rich"] = false,
   }
-
-  -- Create a temp directory (we won't actually read a file for this unit test)
-  local temp_dir = vim.fn.tempname()
-  vim.fn.mkdir(temp_dir, "p")
+  local deps_list = {
+    { name = "requests", spec = "requests>=2.0", line = 1, col_start = 1, col_end = 1, group = "project" },
+  }
 
   -- Direct package
-  local info1 = badges.get_package_info(temp_dir, "requests", direct_deps)
+  local info1 = badges.get_package_info("requests", direct_deps, deps_list)
   MiniTest.expect.equality(info1.direct, true)
 
   -- Transitive package
-  local info2 = badges.get_package_info(temp_dir, "rich", direct_deps)
+  local info2 = badges.get_package_info("rich", direct_deps, deps_list)
   MiniTest.expect.equality(info2.direct, false)
-
-  -- Cleanup
-  vim.fn.delete(temp_dir, "rf")
 end
 
-T["get_package_info handles unloaded pyproject buffer"] = function()
+T["get_package_info retrieves group from deps_list"] = function()
   local direct_deps = {
     ["testpkg"] = true,
   }
+  local deps_list = {
+    { name = "testpkg", spec = "testpkg>=1.0", line = 1, col_start = 1, col_end = 1, group = "optional:dev" },
+  }
 
-  -- Create a temp directory with a real pyproject.toml
-  local temp_dir = vim.fn.tempname()
-  vim.fn.mkdir(temp_dir, "p")
-  local pyproject_path = temp_dir .. "/pyproject.toml"
-  local pyproject_content = table.concat({
-    "[project]",
-    'dependencies = ["testpkg>=1.0"]',
-  }, "\n")
-  vim.fn.writefile(vim.split(pyproject_content, "\n"), pyproject_path)
-
-  -- Create buffer without loading (bufadd only)
-  local pyproject_buf = vim.fn.bufadd(pyproject_path)
-  _ = pyproject_buf
-  -- Don't call bufload to simulate unloaded state
-
-  -- get_package_info should still work (it calls bufload internally)
-  local info = badges.get_package_info(temp_dir, "testpkg", direct_deps)
-
-  -- Should be marked as direct since it's in direct_deps
+  local info = badges.get_package_info("testpkg", direct_deps, deps_list)
   MiniTest.expect.equality(info.direct, true)
+  MiniTest.expect.equality(info.group, "optional:dev")
+end
 
-  -- Cleanup
-  vim.fn.delete(pyproject_path, "rf")
+T["get_package_info does not create buffers"] = function()
+  local direct_deps = { ["pkg"] = true }
+  local deps_list = {
+    { name = "pkg", spec = "pkg>=1.0", line = 1, col_start = 1, col_end = 1, group = "project" },
+  }
+
+  local buf_count_before = #vim.api.nvim_list_bufs()
+  badges.get_package_info("pkg", direct_deps, deps_list)
+  local buf_count_after = #vim.api.nvim_list_bufs()
+
+  MiniTest.expect.equality(buf_count_after, buf_count_before)
 end
 
 return T

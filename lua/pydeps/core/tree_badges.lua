@@ -1,5 +1,3 @@
-local cache = require("pydeps.core.cache")
-
 local M = {}
 
 ---@class PyDepsTreeBadge
@@ -11,29 +9,20 @@ local M = {}
 ---@field group string?
 ---@field extras string[]
 
----@param root string
 ---@param package string
 ---@param direct_deps table<string, boolean>
+---@param deps_list PyDepsDependency[] Pre-parsed dependency list
 ---@return PyDepsTreePackageInfo
-function M.get_package_info(root, package, direct_deps)
-  -- Determine if direct
+function M.get_package_info(package, direct_deps, deps_list)
   local direct = direct_deps[package] or false
 
-  -- Get group/extras from direct deps
   local group = nil
   local extras = {}
 
   if direct then
-    -- Find the dep in pyproject to get group/extras
-    local pyproject_path = vim.fs.joinpath(root, "pyproject.toml")
-    local pyproject_buf = vim.fn.bufadd(pyproject_path)
-    vim.fn.bufload(pyproject_buf)
-    local deps = cache.get_pyproject(pyproject_buf)
-
-    for _, dep in ipairs(deps) do
+    for _, dep in ipairs(deps_list) do
       if dep.name == package then
         group = dep.group
-        -- Parse extras from the dependency spec if needed
         break
       end
     end

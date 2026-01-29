@@ -96,6 +96,43 @@ local function get_parser(bufnr)
   return parser
 end
 
+---Ensure the comment query is initialised
+---@return table|nil query
+local function ensure_comment_query()
+  if not comment_query then
+    local query_str = [[(comment) @comment]]
+    local ok, query = pcall(vim.treesitter.query.parse, "toml", query_str)
+    if not ok then
+      return nil
+    end
+    comment_query = query
+  end
+  return comment_query
+end
+
+---Build a map of 0-indexed line number → 1-indexed comment column for all
+---comment nodes under the given tree root.  This avoids re-parsing the buffer
+---once per dependency.
+---@param bufnr integer
+---@param tree_root table Tree-sitter root node
+---@return table<integer, integer> comment_map line (0-indexed) → col (1-indexed)
+local function build_comment_map(bufnr, tree_root)
+  local map = {}
+  local query = ensure_comment_query()
+  if not query then
+    return map
+  end
+
+  for _, node in query:iter_captures(tree_root, bufnr, 0, -1) do
+    local start_row, start_col = node:range()
+    if not map[start_row] then
+      map[start_row] = start_col + 1 -- Convert to 1-indexed
+    end
+  end
+
+  return map
+end
+
 ---Get comment column for a line
 ---@param bufnr integer
 ---@param line integer 0-indexed line number
@@ -113,19 +150,12 @@ function M.get_comment_col(bufnr, line)
 
   local root = tree:root()
 
-  -- Parse query once and cache it
-  if not comment_query then
-    local query_str = [[
-      (comment) @comment
-    ]]
-    local ok, query = pcall(vim.treesitter.query.parse, "toml", query_str)
-    if not ok then
-      return nil
-    end
-    comment_query = query
+  local query = ensure_comment_query()
+  if not query then
+    return nil
   end
 
-  for _, node in comment_query:iter_captures(root, bufnr, line, line + 1) do
+  for _, node in query:iter_captures(root, bufnr, line, line + 1) do
     local start_row, start_col = node:range()
     if start_row == line then
       return start_col + 1 -- Convert to 1-indexed
@@ -173,8 +203,9 @@ end
 ---@param bufnr integer
 ---@param array_node table Tree-sitter node
 ---@param section string Section name (e.g., "project", "optional:dev")
+---@param comment_map table<integer, integer> 0-indexed line → 1-indexed comment col
 ---@return PyDepsDependency[]
-local function parse_array_dependencies(bufnr, array_node, section)
+local function parse_array_dependencies(bufnr, array_node, section, comment_map)
   local deps = {}
 
   for child in array_node:iter_children() do
@@ -187,7 +218,7 @@ local function parse_array_dependencies(bufnr, array_node, section)
 
       local name = util.parse_requirement_name(unquoted)
       if name then
-        local comment_col = M.get_comment_col(bufnr, start_row)
+        local comment_col = comment_map[start_row]
         table.insert(deps, {
           name = name,
           spec = unquoted,
@@ -219,6 +250,7 @@ function M.parse_buffer(bufnr)
   end
 
   local root = tree:root()
+  local comment_map = build_comment_map(bufnr, root)
   local deps = {}
 
   for node in root:iter_children() do
@@ -240,7 +272,7 @@ function M.parse_buffer(bufnr)
                 section = "group:" .. key_name
               end
               if section then
-                local parsed = parse_array_dependencies(bufnr, array_node, section)
+                local parsed = parse_array_dependencies(bufnr, array_node, section, comment_map)
                 vim.list_extend(deps, parsed)
               end
             end

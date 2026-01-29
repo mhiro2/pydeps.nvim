@@ -196,7 +196,17 @@ function M.tree(opts)
   local width_calc = nil
   if opts.mode == "float" and not opts.width then
     width_calc = function(lines)
-      return tree_ui.estimate_width(lines, opts.root, nil)
+      if opts.root then
+        local pyproject_path = vim.fs.joinpath(opts.root, "pyproject.toml")
+        local pyproject = require("pydeps.sources.pyproject")
+        local deps_list = pyproject.parse(pyproject_path)
+        local direct_deps = {}
+        for _, dep in ipairs(deps_list) do
+          direct_deps[dep.name] = true
+        end
+        return tree_ui.estimate_width(lines, direct_deps, deps_list)
+      end
+      return tree_ui.estimate_width(lines, nil, nil)
     end
   end
 
