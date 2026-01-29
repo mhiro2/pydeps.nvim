@@ -3,6 +3,7 @@
 ---@field on_exit? fun(code: integer)
 
 local output = require("pydeps.ui.output")
+local util = require("pydeps.util")
 
 local M = {}
 
@@ -13,15 +14,6 @@ local UV_LOCK_TIMEOUT = 300000
 
 -- Track whether we've notified about uv not being found
 local uv_notified = false
-
----@param timer uv_timer_t
----@return nil
-local function safe_close_timer(timer)
-  if timer and not timer:is_closing() then
-    timer:stop()
-    timer:close()
-  end
-end
 
 ---@return boolean
 local function ensure_uv()
@@ -80,7 +72,7 @@ function M.resolve(opts)
   if job_id > 0 then
     local timer = uv.new_timer()
     timer:start(UV_LOCK_TIMEOUT, 0, function()
-      safe_close_timer(timer)
+      util.safe_close_timer(timer)
       if not completed then
         completed = true
         vim.fn.jobstop(job_id)

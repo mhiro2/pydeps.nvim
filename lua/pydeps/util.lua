@@ -3,7 +3,116 @@
 ---@field start_col integer
 ---@field end_col integer
 
+---@class PyDepsLRUCache
+---@field max_size integer
+---@field cache table<string, any>
+---@field order string[]
+---@field get fun(self: PyDepsLRUCache, key: string): any
+---@field set fun(self: PyDepsLRUCache, key: string, value: any): nil
+
 local M = {}
+
+local uv = vim.uv
+
+---Get current time in seconds
+---@return number
+function M.now()
+  return uv.now() / 1000
+end
+
+---Safely close a timer
+---@param timer uv_timer_t?
+---@return nil
+function M.safe_close_timer(timer)
+  if timer and not timer:is_closing() then
+    timer:stop()
+    timer:close()
+  end
+end
+
+---Emit a User autocmd with the given pattern and data
+---@param pattern string
+---@param data? table
+---@return nil
+function M.emit_user_autocmd(pattern, data)
+  if not pattern or pattern == "" then
+    return
+  end
+  vim.schedule(function()
+    pcall(vim.api.nvim_exec_autocmds, "User", {
+      pattern = pattern,
+      data = data or {},
+    })
+  end)
+end
+
+---Create an LRU (Least Recently Used) cache with a maximum size
+---@param max_size integer
+---@return PyDepsLRUCache
+function M.create_lru_cache(max_size)
+  local cache = {
+    max_size = max_size,
+    cache = {},
+    order = {},
+  }
+
+  ---@param self PyDepsLRUCache
+  ---@param key string
+  ---@return any
+  function cache:get(key)
+    local value = self.cache[key]
+    if value ~= nil then
+      -- Move key to end of order (most recently used)
+      for i, k in ipairs(self.order) do
+        if k == key then
+          table.remove(self.order, i)
+          break
+        end
+      end
+      table.insert(self.order, key)
+    end
+    return value
+  end
+
+  ---@param self PyDepsLRUCache
+  ---@param key string
+  ---@param value any
+  function cache:set(key, value)
+    if value == nil then
+      -- Treat nil as delete to avoid caching "missing" values.
+      self.cache[key] = nil
+      for i, k in ipairs(self.order) do
+        if k == key then
+          table.remove(self.order, i)
+          break
+        end
+      end
+      return
+    end
+    if self.cache[key] ~= nil then
+      -- Key exists, just update value and move to end
+      self.cache[key] = value
+      for i, k in ipairs(self.order) do
+        if k == key then
+          table.remove(self.order, i)
+          break
+        end
+      end
+      table.insert(self.order, key)
+    else
+      -- New key
+      if #self.order >= self.max_size then
+        -- Evict least recently used (first in order)
+        local lru_key = table.remove(self.order, 1)
+        self.cache[lru_key] = nil
+      end
+      self.cache[key] = value
+      table.insert(self.order, key)
+    end
+  end
+
+  return cache
+end
 
 ---@param s string
 ---@return string

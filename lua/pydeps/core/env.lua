@@ -18,6 +18,8 @@
 ---@field value PyDepsEnv
 ---@field time number
 
+local util = require("pydeps.util")
+
 local M = {}
 
 ---@type table<string, PyDepsEnvCacheEntry>
@@ -38,25 +40,7 @@ local function emit_env_update(root)
   if not root or root == "" then
     return
   end
-  vim.schedule(function()
-    pcall(vim.api.nvim_exec_autocmds, "User", {
-      pattern = "PyDepsEnvUpdated",
-      data = { root = root },
-    })
-  end)
-end
-
----@param timer uv_timer_t
-local function safe_close_timer(timer)
-  if timer and not timer:is_closing() then
-    timer:stop()
-    timer:close()
-  end
-end
-
----@return number
-local function now()
-  return uv.now() / 1000
+  util.emit_user_autocmd("PyDepsEnvUpdated", { root = root })
 end
 
 ---@param path? string
@@ -156,7 +140,7 @@ local function fetch_env_async(python, venv, key)
     end,
     on_exit = function(_, code, _)
       -- Clear timeout timer
-      safe_close_timer(timers[key])
+      util.safe_close_timer(timers[key])
       timers[key] = nil
 
       fetching[key] = false
@@ -168,7 +152,7 @@ local function fetch_env_async(python, venv, key)
       if ok and decoded then
         decoded.python = python
         decoded.venv = venv
-        cache[key] = { value = decoded, time = now() }
+        cache[key] = { value = decoded, time = util.now() }
         emit_env_update(key)
       end
     end,
@@ -178,7 +162,7 @@ local function fetch_env_async(python, venv, key)
   if job_id > 0 then
     timers[key] = uv.new_timer()
     timers[key]:start(REQUEST_TIMEOUT, 0, function()
-      safe_close_timer(timers[key])
+      util.safe_close_timer(timers[key])
       timers[key] = nil
 
       -- Kill the job
@@ -205,7 +189,7 @@ function M.get(root)
   local cached = cache[key]
 
   -- Return cached value if still valid
-  if cached and (now() - cached.time) < cache_ttl then
+  if cached and (util.now() - cached.time) < cache_ttl then
     return cached.value
   end
 

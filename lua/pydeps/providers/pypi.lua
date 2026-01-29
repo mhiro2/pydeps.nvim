@@ -21,6 +21,7 @@
 ---@field retry_after? number
 
 local config = require("pydeps.config")
+local util = require("pydeps.util")
 
 local M = {}
 
@@ -38,20 +39,6 @@ local timers = {}
 ---@type boolean
 local notified = false
 
----@return number
-local function now()
-  return uv.now() / 1000
-end
-
----@param timer uv_timer_t
----@return nil
-local function safe_close_timer(timer)
-  if timer and not timer:is_closing() then
-    timer:stop()
-    timer:close()
-  end
-end
-
 ---@param name? string
 ---@return string
 local function normalize(name)
@@ -64,12 +51,7 @@ local function emit_update(name)
   if not name or name == "" then
     return
   end
-  vim.schedule(function()
-    pcall(vim.api.nvim_exec_autocmds, "User", {
-      pattern = "PyDepsPyPIUpdated",
-      data = { name = normalize(name) },
-    })
-  end)
+  util.emit_user_autocmd("PyDepsPyPIUpdated", { name = normalize(name) })
 end
 
 ---@param name string
@@ -80,16 +62,16 @@ local function cached_entry(name)
     return nil, false
   end
   -- If failed entry has retry_after in the future, it's in backoff period
-  if entry.failed and entry.retry_after and now() < entry.retry_after then
+  if entry.failed and entry.retry_after and util.now() < entry.retry_after then
     return nil, true -- Indicates that it's in backoff period
   end
   -- Check TTL for successful entries
-  if not entry.failed and (now() - entry.time) > (config.options.pypi_cache_ttl or 3600) then
+  if not entry.failed and (util.now() - entry.time) > (config.options.pypi_cache_ttl or 3600) then
     cache[normalize(name)] = nil
     return nil, false
   end
   -- If retry_after has passed for failed entry, retry is allowed
-  if entry.failed and entry.retry_after and now() >= entry.retry_after then
+  if entry.failed and entry.retry_after and util.now() >= entry.retry_after then
     cache[normalize(name)] = nil
     return nil, false
   end
@@ -101,10 +83,10 @@ end
 ---@param failed? boolean
 ---@return nil
 local function set_cache(name, data, failed)
-  local entry = { data = data, time = now() }
+  local entry = { data = data, time = util.now() }
   if failed then
     entry.failed = true
-    entry.retry_after = now() + 60 -- 60 second backoff
+    entry.retry_after = util.now() + 60 -- 60 second backoff
   end
   cache[normalize(name)] = entry
 end
@@ -150,7 +132,7 @@ local function run_request(cmd, name)
     end
     completed = true
 
-    safe_close_timer(timers[normalized])
+    util.safe_close_timer(timers[normalized])
     timers[normalized] = nil
 
     if decoded then
@@ -270,7 +252,7 @@ local function run_python_json(script, args, cb)
   if job_id > 0 then
     local timer = uv.new_timer()
     timer:start(REQUEST_TIMEOUT, 0, function()
-      safe_close_timer(timer)
+      util.safe_close_timer(timer)
       if not completed then
         completed = true
         vim.fn.jobstop(job_id)

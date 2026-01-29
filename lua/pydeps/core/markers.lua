@@ -13,17 +13,16 @@ local util = require("pydeps.util")
 
 local M = {}
 
--- Cache for tokenize and parse results
----@type table<string, PyDepsMarkerToken[]>
-local tokenize_cache = {}
----@type table<string, PyDepsMarkerNode?>
-local parse_cache = {}
+-- LRU caches for tokenize and parse results (max 100 entries to prevent memory leaks)
+local tokenize_cache = util.create_lru_cache(100)
+local parse_cache = util.create_lru_cache(100)
 
 ---@param expr string
 ---@return PyDepsMarkerToken[]
 local function tokenize(expr)
-  if tokenize_cache[expr] then
-    return tokenize_cache[expr]
+  local cached = tokenize_cache:get(expr)
+  if cached then
+    return cached
   end
 
   local tokens = {}
@@ -109,7 +108,7 @@ local function tokenize(expr)
     end
   end
 
-  tokenize_cache[expr] = tokens
+  tokenize_cache:set(expr, tokens)
   return tokens
 end
 
@@ -124,8 +123,9 @@ local function parser(tokens)
     "|"
   )
 
-  if parse_cache[cache_key] ~= nil then
-    return parse_cache[cache_key]
+  local cached = parse_cache:get(cache_key)
+  if cached ~= nil then
+    return cached
   end
 
   local pos = 1
@@ -205,7 +205,7 @@ local function parser(tokens)
   end
 
   local result = parse_or()
-  parse_cache[cache_key] = result
+  parse_cache:set(cache_key, result)
   return result
 end
 
