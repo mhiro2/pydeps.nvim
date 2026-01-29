@@ -174,31 +174,22 @@ T["estimate_width without root returns max line width plus padding"] = function(
   MiniTest.expect.equality(width, max_line_width + 2) -- 2 for padding
 end
 
-T["estimate_width with root includes badge width"] = function()
+T["estimate_width with deps includes badge width"] = function()
   local lines = {
     "requests v2.31.0",
   }
 
-  -- Create a temp directory with pyproject.toml
-  local temp_dir = vim.fn.tempname()
-  vim.fn.mkdir(temp_dir, "p")
-  local pyproject_path = temp_dir .. "/pyproject.toml"
-  local pyproject_content = table.concat({
-    "[project]",
-    'dependencies = ["requests>=2.31.0"]',
-  }, "\n")
-  vim.fn.writefile(vim.split(pyproject_content, "\n"), pyproject_path)
+  local direct_deps = { requests = true }
+  local deps_list =
+    { { name = "requests", spec = "requests>=2.31.0", line = 1, col_start = 1, col_end = 1, group = "project" } }
 
-  local width = tree_ui.estimate_width(lines, temp_dir, nil)
+  local width = tree_ui.estimate_width(lines, direct_deps, deps_list)
 
   -- Width should be at least line width + badge width + space + padding
   local line_width = vim.fn.strdisplaywidth("requests v2.31.0")
   -- [direct] badge is 8 characters, plus 1 space before it
   local expected_min_width = line_width + 1 + 8 + 2
   MiniTest.expect.equality(width >= expected_min_width, true)
-
-  -- Cleanup
-  vim.fn.delete(temp_dir, "rf")
 end
 
 T["estimate_width with empty lines"] = function()
@@ -215,25 +206,13 @@ T["estimate_width with empty lines"] = function()
 end
 
 T["tree badges mark direct and transitive deps"] = function()
-  local temp_dir = vim.fn.tempname()
-  vim.fn.mkdir(temp_dir, "p")
-  local pyproject_path = temp_dir .. "/pyproject.toml"
-  local pyproject_content = {
-    "[project]",
-    'dependencies = ["requests>=2.31.0"]',
-  }
-  vim.fn.writefile(pyproject_content, pyproject_path)
-
-  local pyproject = require("pydeps.sources.pyproject")
-  local deps = pyproject.parse(pyproject_path)
-  local direct_deps = {}
-  for _, dep in ipairs(deps) do
-    direct_deps[dep.name] = true
-  end
+  local direct_deps = { requests = true }
+  local deps_list =
+    { { name = "requests", spec = "requests>=2.31.0", line = 1, col_start = 1, col_end = 1, group = "project" } }
 
   local badges = require("pydeps.core.tree_badges")
-  local info_direct = badges.get_package_info(temp_dir, "requests", direct_deps)
-  local info_transitive = badges.get_package_info(temp_dir, "urllib3", direct_deps)
+  local info_direct = badges.get_package_info("requests", direct_deps, deps_list)
+  local info_transitive = badges.get_package_info("urllib3", direct_deps, deps_list)
 
   local direct_badge = badges.build_badges(info_direct)[1]
   local transitive_badge = badges.build_badges(info_transitive)[1]
@@ -242,8 +221,6 @@ T["tree badges mark direct and transitive deps"] = function()
   MiniTest.expect.equality(info_transitive.direct, false)
   MiniTest.expect.equality(direct_badge.text, "[direct]")
   MiniTest.expect.equality(transitive_badge.text, "[transitive]")
-
-  vim.fn.delete(temp_dir, "rf")
 end
 
 return T
