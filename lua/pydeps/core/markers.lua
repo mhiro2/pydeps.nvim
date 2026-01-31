@@ -283,11 +283,21 @@ local function evaluate(node, env)
   if node.type == "and" then
     local left = evaluate(node.left, env)
     local right = evaluate(node.right, env)
-    -- If either side is nil (not evaluated), return nil
-    if left == nil or right == nil then
-      return nil
+    -- If left is false, short-circuit (right doesn't matter)
+    if left == false then
+      return false
     end
-    return left and right
+    -- If left is true, result depends on right
+    if left == true then
+      return right
+    end
+    -- left is nil (undetermined), so result depends on right
+    -- If right is false, result is false (can be determined)
+    -- If right is true or nil, result is nil (still undetermined)
+    if right == false then
+      return false
+    end
+    return nil
   end
   if node.type == "or" then
     local left = evaluate(node.left, env)
@@ -300,8 +310,13 @@ local function evaluate(node, env)
     if left == false then
       return right
     end
-    -- left is nil, so result depends on right
-    return right
+    -- left is nil (undetermined), so result depends on right
+    -- If right is true, result is true (can be determined)
+    -- If right is false or nil, result is nil (still undetermined)
+    if right == true then
+      return true
+    end
+    return nil
   end
   if node.type == "compare" then
     local left = evaluate(node.left, env)

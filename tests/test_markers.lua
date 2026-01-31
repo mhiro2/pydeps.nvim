@@ -83,6 +83,30 @@ T["evaluate markers - boundary conditions"] = function()
 
   -- undefined variable in env should return nil (evaluation incomplete)
   MiniTest.expect.equality(markers.evaluate("undefined_var == 'test'", env), nil)
+
+  -- and operator: nil (undefined var) on left, false (known condition) on right should return false (determined by right)
+  MiniTest.expect.equality(markers.evaluate("undefined_var == 'test' and sys_platform == 'win32'", env), false)
+
+  -- and operator: nil (undefined var) on left, true (known condition) on right should return nil (undetermined)
+  MiniTest.expect.equality(markers.evaluate("undefined_var == 'test' and sys_platform == 'linux'", env), nil)
+
+  -- and operator: nil on both sides should return nil
+  MiniTest.expect.equality(markers.evaluate("undefined_var1 == 'test' and undefined_var2 == 'test'", env), nil)
+
+  -- and operator: true (known condition) on left, nil (undefined var) on right should return nil
+  MiniTest.expect.equality(markers.evaluate("sys_platform == 'linux' and undefined_var == 'test'", env), nil)
+
+  -- or operator: nil (undefined var) on left, false (known condition) on right should return nil (undetermined)
+  MiniTest.expect.equality(markers.evaluate("undefined_var == 'test' or sys_platform == 'win32'", env), nil)
+
+  -- or operator: nil (undefined var) on left, true (known condition) on right should return true (determined by right)
+  MiniTest.expect.equality(markers.evaluate("undefined_var == 'test' or sys_platform == 'linux'", env), true)
+
+  -- or operator: nil on both sides should return nil
+  MiniTest.expect.equality(markers.evaluate("undefined_var1 == 'test' or undefined_var2 == 'test'", env), nil)
+
+  -- or operator: false (known condition) on left, nil (undefined var) on right should return nil
+  MiniTest.expect.equality(markers.evaluate("sys_platform == 'win32' or undefined_var == 'test'", env), nil)
 end
 
 T["evaluate markers - escape sequences"] = function()
