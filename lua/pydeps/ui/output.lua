@@ -150,7 +150,7 @@ function M.show(title, lines, opts)
       style = "minimal",
       border = opts.border or "rounded",
     })
-    vim.api.nvim_win_set_option(win, "wrap", false)
+    vim.api.nvim_set_option_value("wrap", false, { win = win })
 
     -- Ensure focus is moved to the float window
     if enter then
@@ -197,7 +197,7 @@ function M.show(title, lines, opts)
       split = "right",
       win = 0,
     })
-    vim.api.nvim_win_set_option(win, "wrap", false)
+    vim.api.nvim_set_option_value("wrap", false, { win = win })
   end
   vim.api.nvim_buf_set_name(buf, title)
 end

@@ -124,7 +124,7 @@ function M.show(opts)
     border = config.options.select_menu_border or "rounded",
   })
 
-  vim.api.nvim_win_set_option(win, "wrap", false)
+  vim.api.nvim_set_option_value("wrap", false, { win = win })
 
   handle_input(win, opts.items, opts.on_select)
 end
