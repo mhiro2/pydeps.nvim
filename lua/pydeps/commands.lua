@@ -133,18 +133,16 @@ local function update_version(spec, latest)
   return normalize_spec(updated)
 end
 
----@param bufnr integer
 ---@param target string
 ---@param deps PyDepsDependency[]
 ---@return PyDepsDependency?
-local function find_dep_by_name(bufnr, target, deps)
+local function find_dep_by_name(target, deps)
+  local normalized_target = util.parse_requirement_name(target)
   for _, dep in ipairs(deps or {}) do
-    if dep.name == target then
+    local normalized_name = util.parse_requirement_name(dep.name)
+    if normalized_name == normalized_target then
       return dep
     end
-  end
-  if not is_pyproject_buf(bufnr) then
-    return nil
   end
   return nil
 end
@@ -181,6 +179,9 @@ local function update_dependency(bufnr, dep)
   end
 
   pypi.get(dep.name, function(meta)
+    if not vim.api.nvim_buf_is_valid(bufnr) then
+      return
+    end
     if not meta or not meta.info or not meta.info.version then
       vim.notify("pydeps: PyPI metadata not available", vim.log.levels.WARN)
       return
@@ -191,14 +192,13 @@ local function update_dependency(bufnr, dep)
   end)
 end
 
----@param bufnr integer
 ---@param target? string
 ---@param deps PyDepsDependency[]
 ---@return PyDepsDependency?
-local function find_dependency_to_update(bufnr, target, deps)
+local function find_dependency_to_update(target, deps)
   -- If target specified, find by name
   if target and target ~= "" then
-    local dep = find_dep_by_name(bufnr, target, deps)
+    local dep = find_dep_by_name(target, deps)
     if not dep then
       vim.notify("pydeps: dependency not found: " .. target, vim.log.levels.WARN)
     end
@@ -237,7 +237,7 @@ function M.update(target)
   end
 
   local deps = parse_buffer_deps(bufnr)
-  local dep = find_dependency_to_update(bufnr, target, deps)
+  local dep = find_dependency_to_update(target, deps)
 
   if not dep then
     return
