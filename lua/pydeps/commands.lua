@@ -571,7 +571,7 @@ function M.provenance(target)
   })
   if not ok then
     info.resume_close()
-    error(err)
+    vim.notify(string.format("pydeps: failed to show provenance: %s", err or "unknown error"), vim.log.levels.ERROR)
   end
 end
 
