@@ -38,6 +38,8 @@ function M.resolve(opts)
   local stderr = {}
   local completed = false
 
+  local timer = nil
+
   local job_id = vim.fn.jobstart({ "uv", "lock" }, {
     cwd = cwd,
     stderr_buffered = true,
@@ -47,6 +49,9 @@ function M.resolve(opts)
       end
     end,
     on_exit = function(_, code, _)
+      util.safe_close_timer(timer)
+      timer = nil
+
       if completed then
         return
       end
@@ -68,18 +73,27 @@ function M.resolve(opts)
     end,
   })
 
+  if job_id <= 0 then
+    vim.notify("pydeps: failed to start uv lock", vim.log.levels.ERROR)
+    return
+  end
+
   -- Set up timeout timer
-  if job_id > 0 then
-    local timer = uv.new_timer()
-    timer:start(UV_LOCK_TIMEOUT, 0, function()
-      util.safe_close_timer(timer)
-      if not completed then
-        completed = true
+  timer = uv.new_timer()
+  timer:start(UV_LOCK_TIMEOUT, 0, function()
+    util.safe_close_timer(timer)
+    timer = nil
+    if not completed then
+      completed = true
+      vim.schedule(function()
         vim.fn.jobstop(job_id)
         vim.notify("pydeps: uv lock timed out after 5 minutes", vim.log.levels.ERROR)
-      end
-    end)
-  end
+        if opts and opts.on_exit then
+          opts.on_exit(-1)
+        end
+      end)
+    end
+  end)
 end
 
 -- Cached feature detection for uv tree flags
