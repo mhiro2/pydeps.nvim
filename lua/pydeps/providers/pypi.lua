@@ -230,6 +230,7 @@ local function run_python_json(script, args, cb)
   end
   local stdout = {}
   local completed = false
+  local timer = nil
 
   local job_id = vim.fn.jobstart(cmd, {
     stdout_buffered = true,
@@ -240,6 +241,9 @@ local function run_python_json(script, args, cb)
       end
     end,
     on_exit = function()
+      util.safe_close_timer(timer)
+      timer = nil
+
       if not completed then
         completed = true
         local payload = table.concat(stdout or {}, "\n")
@@ -248,25 +252,28 @@ local function run_python_json(script, args, cb)
     end,
   })
 
-  -- Set up timeout timer
-  if job_id > 0 then
-    local timer = uv.new_timer()
-    timer:start(REQUEST_TIMEOUT, 0, function()
-      util.safe_close_timer(timer)
-      if not completed then
-        completed = true
-        vim.fn.jobstop(job_id)
-        cb(nil)
-      end
-    end)
-  else
-    -- jobstart failed
+  if job_id <= 0 then
     vim.notify(
       "pydeps: Failed to execute Python. Please ensure Python is installed and accessible.",
       vim.log.levels.ERROR
     )
     cb(nil)
+    return
   end
+
+  -- Set up timeout timer
+  timer = uv.new_timer()
+  timer:start(REQUEST_TIMEOUT, 0, function()
+    util.safe_close_timer(timer)
+    timer = nil
+    if not completed then
+      completed = true
+      vim.schedule(function()
+        vim.fn.jobstop(job_id)
+        cb(nil)
+      end)
+    end
+  end)
 end
 
 ---@param name string
