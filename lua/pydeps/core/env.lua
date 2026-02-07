@@ -165,9 +165,11 @@ local function fetch_env_async(python, venv, key)
       util.safe_close_timer(timers[key])
       timers[key] = nil
 
-      -- Kill the job
-      vim.fn.jobstop(job_id)
-      fetching[key] = false
+      -- Kill the job (must be scheduled to avoid fast event context error)
+      vim.schedule(function()
+        vim.fn.jobstop(job_id)
+        fetching[key] = false
+      end)
     end)
   else
     -- jobstart failed
