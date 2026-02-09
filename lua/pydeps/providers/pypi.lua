@@ -46,6 +46,12 @@ local function normalize(name)
 end
 
 ---@param name string
+---@return boolean
+local function is_valid_package_name(name)
+  return name:match("^[a-z0-9][a-z0-9%._-]*$") ~= nil
+end
+
+---@param name string
 ---@return nil
 local function emit_update(name)
   if not name or name == "" then
@@ -202,8 +208,11 @@ local function run_request(cmd, name)
 end
 
 ---@param name string
----@return string
+---@return string?
 local function request_url(name)
+  if not is_valid_package_name(name) then
+    return nil
+  end
   local base = config.options.pypi_url or "https://pypi.org/pypi"
   return string.format("%s/%s/json", base, name)
 end
@@ -294,6 +303,12 @@ function M.get(name, cb)
     end
     return
   end
+  if not is_valid_package_name(normalized) then
+    if cb then
+      cb(nil)
+    end
+    return
+  end
   local cached, is_backoff = cached_entry(name)
   if cached then
     if cb then
@@ -317,6 +332,14 @@ function M.get(name, cb)
   pending[normalized] = cb and { cb } or {}
 
   local url = request_url(normalized)
+  if not url then
+    local callbacks = pending[normalized] or {}
+    pending[normalized] = nil
+    for _, cbf in ipairs(callbacks) do
+      cbf(nil)
+    end
+    return
+  end
   if vim.fn.executable("curl") == 1 then
     run_request({ "curl", "-fsSL", url }, normalized)
   elseif vim.fn.executable("python3") == 1 or vim.fn.executable("python") == 1 then
