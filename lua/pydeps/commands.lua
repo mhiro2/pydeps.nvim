@@ -122,7 +122,7 @@ local function update_version(spec, latest)
   end
   local op, version = rest:match("([<>=!~]=?)%s*([^,%s]+)")
   if op and version then
-    rest = rest:gsub(op .. "%s*" .. version, op .. latest, 1)
+    rest = rest:gsub(vim.pesc(op) .. "%s*" .. vim.pesc(version), op .. latest, 1)
   else
     rest = " >= " .. latest
   end
