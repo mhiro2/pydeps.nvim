@@ -267,4 +267,19 @@ T["pin not found shows message when version not on PyPI"] = function()
   MiniTest.expect.equality(string.find(text, "not on public PyPI") ~= nil, true)
 end
 
+T["virtual_text: does not leak helper globals"] = function()
+  stub_env()
+  stub_pypi()
+  _G.should_render_virtual_text = nil
+  _G.queue_pypi_request = nil
+  _G.get_treesitter_ranges = nil
+  package.loaded["pydeps.ui.virtual_text"] = nil
+
+  local _ = require("pydeps.ui.virtual_text")
+
+  MiniTest.expect.equality(rawget(_G, "should_render_virtual_text"), nil)
+  MiniTest.expect.equality(rawget(_G, "queue_pypi_request"), nil)
+  MiniTest.expect.equality(rawget(_G, "get_treesitter_ranges"), nil)
+end
+
 return T
