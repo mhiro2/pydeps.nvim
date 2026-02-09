@@ -145,4 +145,34 @@ T["update allows version spec"] = function()
   cleanup(dir)
 end
 
+T["update escapes pattern characters in version spec"] = function()
+  local original_commands = package.loaded["pydeps.commands"]
+  local original_pypi = package.loaded["pydeps.providers.pypi"]
+
+  package.loaded["pydeps.commands"] = nil
+  package.loaded["pydeps.providers.pypi"] = {
+    get = function(_, cb)
+      cb({ info = { version = "2.0.0" } })
+    end,
+  }
+
+  local commands = require("pydeps.commands")
+  local dir = create_project({
+    "[project]",
+    'dependencies = ["pkg==1.0+cpu"]',
+  })
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.bo[bufnr].filetype = "toml"
+
+  commands.update("pkg")
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  MiniTest.expect.equality(vim.tbl_contains(lines, 'dependencies = ["pkg==2.0.0"]'), true)
+  cleanup(dir)
+
+  package.loaded["pydeps.commands"] = original_commands
+  package.loaded["pydeps.providers.pypi"] = original_pypi
+end
+
 return T

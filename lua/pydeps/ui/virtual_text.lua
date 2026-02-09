@@ -654,7 +654,7 @@ end
 ---Check if virtual text should be rendered based on configuration
 ---@private
 ---@return boolean
-function should_render_virtual_text()
+local function should_render_virtual_text()
   if config.options.show_virtual_text == false then
     return false
   end
@@ -671,7 +671,7 @@ end
 ---@param resolved PyDepsResolved
 ---@param opts? PyDepsRenderOptions
 ---@return nil
-function queue_pypi_request(bufnr, package_name, deps, resolved, opts)
+local function queue_pypi_request(bufnr, package_name, deps, resolved, opts)
   pending[package_name] = "searching"
   limiter:enqueue(function(done)
     pending[package_name] = "loading"
@@ -688,7 +688,7 @@ end
 ---@private
 ---@param bufnr integer
 ---@return table?
-function get_treesitter_ranges(bufnr)
+local function get_treesitter_ranges(bufnr)
   if ts_toml and ts_toml.is_available() then
     return ts_toml.get_dependency_array_ranges(bufnr)
   end
