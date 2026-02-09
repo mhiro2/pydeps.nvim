@@ -38,11 +38,25 @@ local pending = {}
 local timers = {}
 ---@type boolean
 local notified = false
+---@type string[]?
+local simple_index_names = nil
+---@type number
+local simple_index_updated_at = 0
+---@type boolean
+local simple_index_loading = false
+---@type fun(names: string[]?)[]
+local simple_index_callbacks = {}
 
 ---@param name? string
 ---@return string
 local function normalize(name)
   return (name or ""):lower()
+end
+
+---@param name string
+---@return boolean
+local function is_valid_package_name(name)
+  return name:match("^[a-z0-9][a-z0-9%._-]*$") ~= nil
 end
 
 ---@param name string
@@ -202,17 +216,93 @@ local function run_request(cmd, name)
 end
 
 ---@param name string
----@return string
+---@return string?
 local function request_url(name)
+  if not is_valid_package_name(name) then
+    return nil
+  end
   local base = config.options.pypi_url or "https://pypi.org/pypi"
   return string.format("%s/%s/json", base, name)
+end
+
+---@return boolean
+local function simple_index_cache_valid()
+  if not simple_index_names then
+    return false
+  end
+  local ttl = config.options.pypi_cache_ttl or 3600
+  return (util.now() - simple_index_updated_at) <= ttl
+end
+
+---@type fun(script: string, args: string[]?, cb: fun(result: table?)): nil
+local run_python_json
+
+---@param cb fun(names: string[]?)
+---@return nil
+local function with_simple_index(cb)
+  if simple_index_cache_valid() then
+    cb(simple_index_names)
+    return
+  end
+
+  table.insert(simple_index_callbacks, cb)
+  if simple_index_loading then
+    return
+  end
+  simple_index_loading = true
+
+  local script = table.concat({
+    "import json,sys,urllib.request",
+    "req=urllib.request.Request(sys.argv[1], headers={'Accept': 'application/vnd.pypi.simple.v1+json'})",
+    "with urllib.request.urlopen(req) as r:",
+    "  data=json.loads(r.read().decode('utf-8'))",
+    "projects=data.get('projects') or []",
+    "names=sorted({p.get('name') for p in projects if p.get('name')})",
+    "print(json.dumps(names))",
+  }, "\n")
+
+  run_python_json(script, { "https://pypi.org/simple/" }, function(result)
+    local names = nil
+    if type(result) == "table" then
+      names = result
+      simple_index_names = result
+      simple_index_updated_at = util.now()
+    end
+
+    simple_index_loading = false
+    local callbacks = simple_index_callbacks
+    simple_index_callbacks = {}
+    for _, callback in ipairs(callbacks) do
+      callback(names)
+    end
+  end)
+end
+
+---@param names string[]
+---@param query string
+---@param limit integer
+---@return string[]
+local function filter_prefix(names, query, limit)
+  local results = {}
+  local prefix = normalize(query)
+
+  for _, name in ipairs(names) do
+    if normalize(name):find(prefix, 1, true) == 1 then
+      table.insert(results, name)
+      if #results >= limit then
+        break
+      end
+    end
+  end
+
+  return results
 end
 
 ---@param script string
 ---@param args? string[]
 ---@param cb fun(result: table?)
 ---@return nil
-local function run_python_json(script, args, cb)
+run_python_json = function(script, args, cb)
   local python = nil
   if vim.fn.executable("python3") == 1 then
     python = "python3"
@@ -294,6 +384,12 @@ function M.get(name, cb)
     end
     return
   end
+  if not is_valid_package_name(normalized) then
+    if cb then
+      cb(nil)
+    end
+    return
+  end
   local cached, is_backoff = cached_entry(name)
   if cached then
     if cb then
@@ -317,6 +413,14 @@ function M.get(name, cb)
   pending[normalized] = cb and { cb } or {}
 
   local url = request_url(normalized)
+  if not url then
+    local callbacks = pending[normalized] or {}
+    pending[normalized] = nil
+    for _, cbf in ipairs(callbacks) do
+      cbf(nil)
+    end
+    return
+  end
   if vim.fn.executable("curl") == 1 then
     run_request({ "curl", "-fsSL", url }, normalized)
   elseif vim.fn.executable("python3") == 1 or vim.fn.executable("python") == 1 then
@@ -346,20 +450,22 @@ function M.search(query, cb)
     cb({})
     return
   end
+  local normalized_query = normalize(query)
+  if not is_valid_package_name(normalized_query) then
+    cb({})
+    return
+  end
   local max_results = 30
   if config.options.completion and config.options.completion.max_results then
     max_results = config.options.completion.max_results
   end
-  local script = table.concat({
-    "import json,sys,xmlrpc.client",
-    "client=xmlrpc.client.ServerProxy('https://pypi.org/pypi')",
-    "hits=client.search({'name': sys.argv[1]}, 'or')",
-    "names=sorted({h.get('name') for h in hits if h.get('name')})",
-    "limit=int(sys.argv[2]) if len(sys.argv) > 2 else 30",
-    "print(json.dumps(names[:limit]))",
-  }, "\n")
-  run_python_json(script, { query, tostring(max_results) }, function(result)
-    cb(result or {})
+
+  with_simple_index(function(names)
+    if not names then
+      cb({})
+      return
+    end
+    cb(filter_prefix(names, normalized_query, max_results))
   end)
 end
 
