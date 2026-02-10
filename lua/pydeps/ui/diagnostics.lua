@@ -2,6 +2,7 @@ local config = require("pydeps.config")
 local project = require("pydeps.core.project")
 local env = require("pydeps.core.env")
 local markers = require("pydeps.core.markers")
+local ui_shared = require("pydeps.ui.shared")
 
 local ok_pypi, pypi = pcall(require, "pydeps.providers.pypi")
 
@@ -10,44 +11,12 @@ local M = {}
 local ns = vim.api.nvim_create_namespace("pydeps")
 
 -- Rate limiting for PyPI requests (max concurrent requests)
-local MAX_CONCURRENT_REQUESTS = 5
+local MAX_CONCURRENT_REQUESTS = ui_shared.MAX_CONCURRENT_PYPI_REQUESTS
 ---@type table<string, boolean>
 local pending = {}
-local rate_limit = require("pydeps.core.rate_limit")
-local limiter = rate_limit.new(MAX_CONCURRENT_REQUESTS)
+local limiter = ui_shared.new_pypi_limiter(MAX_CONCURRENT_REQUESTS)
 
--- Debounce state to prevent recursive rendering (per-buffer)
----@type table<integer, {timer: uv_timer_t, pending: boolean}>
-local debounce_state = {}
-
----@param bufnr integer
----@return uv_timer_t?, boolean?
-local function get_debounce_state(bufnr)
-  local state = debounce_state[bufnr]
-  if state then
-    return state.timer, state.pending
-  end
-  return nil, false
-end
-
----@param bufnr integer
----@param timer uv_timer_t
----@param is_pending boolean
-local function set_debounce_state(bufnr, timer, is_pending)
-  debounce_state[bufnr] = { timer = timer, pending = is_pending }
-end
-
----@param bufnr integer
-local function clear_debounce_state(bufnr)
-  local state = debounce_state[bufnr]
-  if state then
-    if state.timer then
-      state.timer:stop()
-      state.timer:close()
-    end
-    debounce_state[bufnr] = nil
-  end
-end
+local debouncer = ui_shared.new_buffer_debouncer(50)
 
 ---@private
 ---@param bufnr integer
@@ -55,37 +24,9 @@ end
 ---@param resolved table
 ---@param opts? table
 local function schedule_render(bufnr, deps, resolved, opts)
-  local _, is_pending = get_debounce_state(bufnr)
-  if is_pending then
-    return
-  end
-
-  -- Clear any existing timer for this buffer
-  clear_debounce_state(bufnr)
-
-  local timer = vim.uv.new_timer()
-  set_debounce_state(bufnr, timer, true)
-
-  timer:start(50, 0, function()
-    timer:stop()
-    timer:close()
-    set_debounce_state(bufnr, nil, false)
-
-    vim.schedule(function()
-      if vim.api.nvim_buf_is_valid(bufnr) then
-        M.render(bufnr, deps, resolved, opts)
-      end
-    end)
+  debouncer.schedule(bufnr, function()
+    M.render(bufnr, deps, resolved, opts)
   end)
-end
-
----@param spec? string
----@return string?
-local function extract_marker(spec)
-  if not spec then
-    return nil
-  end
-  return spec:match(";%s*(.+)$")
 end
 
 ---@param spec? string
@@ -100,16 +41,6 @@ local function extract_exact_version(spec)
     return pinned
   end
   return nil
-end
-
----@param meta? PyDepsPyPIMeta
----@param version string
----@return boolean
-local function is_version_in_releases(meta, version)
-  if not meta or not meta.releases then
-    return true
-  end
-  return meta.releases[version] ~= nil
 end
 
 ---@param dep PyDepsDependency
@@ -139,23 +70,6 @@ local function make_diag(dep, message, severity)
   }
 end
 
----@param base? PyDepsEnv
----@param dep PyDepsDependency
----@return PyDepsEnv
-local function with_extra_env(base, dep)
-  local env_copy = vim.tbl_extend("force", {}, base or {})
-  if dep.group then
-    if dep.group:match("^optional:") then
-      env_copy.extra = dep.group:sub(#"optional:" + 1)
-    elseif dep.group:match("^group:") then
-      local group_name = dep.group:sub(#"group:" + 1)
-      env_copy.group = group_name
-      env_copy.dependency_group = group_name
-    end
-  end
-  return env_copy
-end
-
 ---@param bufnr integer
 ---@param deps? PyDepsDependency[]
 ---@param resolved? PyDepsResolved
@@ -174,8 +88,8 @@ local function compute_diagnostics(bufnr, deps, resolved, opts)
 
   for _, dep in ipairs(deps or {}) do
     local resolved_version = resolved and resolved[dep.name] or nil
-    local marker = extract_marker(dep.spec)
-    local marker_result = markers.evaluate(marker, with_extra_env(current_env, dep))
+    local marker = ui_shared.extract_marker(dep.spec)
+    local marker_result = markers.evaluate(marker, ui_shared.with_extra_env(current_env, dep))
     -- If result is nil (evaluation incomplete), treat as active (don't show diagnostic)
     local marker_active = marker_result ~= false
     local active = marker_active
@@ -221,7 +135,7 @@ local function compute_diagnostics(bufnr, deps, resolved, opts)
       local data = pypi.get_cached(dep.name)
 
       -- Check for pin not found (only for pinned specs)
-      if pinned and data and not is_version_in_releases(data, pinned) then
+      if pinned and data and not ui_shared.is_version_in_releases(data, pinned) then
         table.insert(
           diagnostics,
           make_diag(
@@ -259,7 +173,7 @@ end
 
 ---@param bufnr integer
 function M.clear(bufnr)
-  clear_debounce_state(bufnr)
+  debouncer.clear(bufnr)
   vim.diagnostic.reset(ns, bufnr)
 end
 

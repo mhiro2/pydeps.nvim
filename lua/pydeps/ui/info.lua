@@ -2,6 +2,7 @@ local cache = require("pydeps.core.cache")
 local config = require("pydeps.config")
 local project = require("pydeps.core.project")
 local pypi = require("pydeps.providers.pypi")
+local ui_shared = require("pydeps.ui.shared")
 local util = require("pydeps.util")
 
 local M = {}
@@ -265,24 +266,8 @@ local function clamp_window_size(width, height)
   return math.min(width, max_win_width), math.min(height, max_win_height)
 end
 
----@param kind string
----@return string
-icon_for = function(kind)
-  local icons = (config.options.ui and config.options.ui.icons) or {}
-  if icons.enabled == false then
-    return (icons.fallback and icons.fallback[kind]) or ""
-  end
-  return icons[kind] or (icons.fallback and icons.fallback[kind]) or ""
-end
-
----@param spec? string
----@return string?
-local function extract_marker(spec)
-  if not spec then
-    return nil
-  end
-  return spec:match(";%s*(.+)$")
-end
+icon_for = ui_shared.icon_for
+local extract_marker = ui_shared.extract_marker
 
 -- Column alignment constants
 -- Max label width: with icon = ~9 chars (e.g., " spec")

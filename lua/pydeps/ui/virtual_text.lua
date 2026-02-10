@@ -2,6 +2,7 @@ local config = require("pydeps.config")
 local env = require("pydeps.core.env")
 local markers = require("pydeps.core.markers")
 local project = require("pydeps.core.project")
+local ui_shared = require("pydeps.ui.shared")
 
 local ok_pypi, pypi = pcall(require, "pydeps.providers.pypi")
 local ok_ts, ts_toml = pcall(require, "pydeps.treesitter.toml")
@@ -14,44 +15,12 @@ local M = {}
 M.ns = vim.api.nvim_create_namespace("pydeps.virtual_text")
 
 -- Rate limiting for PyPI requests (max concurrent requests)
-local MAX_CONCURRENT_REQUESTS = 5
+local MAX_CONCURRENT_REQUESTS = ui_shared.MAX_CONCURRENT_PYPI_REQUESTS
 ---@type table<string, "searching" | "loading" | nil>
 local pending = {}
-local rate_limit = require("pydeps.core.rate_limit")
-local limiter = rate_limit.new(MAX_CONCURRENT_REQUESTS)
+local limiter = ui_shared.new_pypi_limiter(MAX_CONCURRENT_REQUESTS)
 
--- Debounce state to prevent recursive rendering (per-buffer)
----@type table<integer, {timer: uv_timer_t, pending: boolean}>
-local debounce_state = {}
-
----@param bufnr integer
----@return uv_timer_t?, boolean?
-local function get_debounce_state(bufnr)
-  local state = debounce_state[bufnr]
-  if state then
-    return state.timer, state.pending
-  end
-  return nil, false
-end
-
----@param bufnr integer
----@param timer uv_timer_t
----@param is_pending boolean
-local function set_debounce_state(bufnr, timer, is_pending)
-  debounce_state[bufnr] = { timer = timer, pending = is_pending }
-end
-
----@param bufnr integer
-local function clear_debounce_state(bufnr)
-  local state = debounce_state[bufnr]
-  if state then
-    if state.timer then
-      state.timer:stop()
-      state.timer:close()
-    end
-    debounce_state[bufnr] = nil
-  end
-end
+local debouncer = ui_shared.new_buffer_debouncer(50)
 
 ---@private
 ---@param bufnr integer
@@ -59,27 +28,8 @@ end
 ---@param resolved table
 ---@param opts? table
 local function schedule_render(bufnr, deps, resolved, opts)
-  local _, is_pending = get_debounce_state(bufnr)
-  if is_pending then
-    return
-  end
-
-  -- Clear any existing timer for this buffer
-  clear_debounce_state(bufnr)
-
-  local timer = vim.uv.new_timer()
-  set_debounce_state(bufnr, timer, true)
-
-  timer:start(50, 0, function()
-    timer:stop()
-    timer:close()
-    set_debounce_state(bufnr, nil, false)
-
-    vim.schedule(function()
-      if vim.api.nvim_buf_is_valid(bufnr) then
-        M.render(bufnr, deps, resolved, opts)
-      end
-    end)
+  debouncer.schedule(bufnr, function()
+    M.render(bufnr, deps, resolved, opts)
   end)
 end
 
@@ -103,7 +53,7 @@ end
 
 ---@param bufnr integer
 function M.clear(bufnr)
-  clear_debounce_state(bufnr)
+  debouncer.clear(bufnr)
   vim.api.nvim_buf_clear_namespace(bufnr, M.ns, 0, -1)
 end
 
@@ -120,31 +70,6 @@ end
 local function section_padding()
   local ui = config.options.ui or {}
   return ui.section_padding or 4
-end
-
----@return PyDepsUiIconConfig
-local function ui_icons()
-  local ui = config.options.ui or {}
-  return ui.icons or {}
-end
-
----@param kind string
----@return string
-local function icon_for(kind)
-  local icons = ui_icons()
-  if icons.enabled == false then
-    return (icons.fallback and icons.fallback[kind]) or ""
-  end
-  return icons[kind] or (icons.fallback and icons.fallback[kind]) or ""
-end
-
----@param spec? string
----@return string?
-local function extract_marker(spec)
-  if not spec then
-    return nil
-  end
-  return spec:match(";%s*(.+)$")
 end
 
 ---@param text string
@@ -168,23 +93,6 @@ local function is_pinned_spec(spec)
   return false, nil
 end
 
----@param base? PyDepsEnv
----@param dep PyDepsDependency
----@return PyDepsEnv
-local function with_extra_env(base, dep)
-  local env_copy = vim.tbl_extend("force", {}, base or {})
-  if dep.group then
-    if dep.group:match("^optional:") then
-      env_copy.extra = dep.group:sub(#"optional:" + 1)
-    elseif dep.group:match("^group:") then
-      local group_name = dep.group:sub(#"group:" + 1)
-      env_copy.group = group_name
-      env_copy.dependency_group = group_name
-    end
-  end
-  return env_copy
-end
-
 ---@param meta? PyDepsPyPIMeta
 ---@return string?
 local function latest_from_meta(meta)
@@ -199,16 +107,6 @@ local function latest_from_meta(meta)
     return versions[1]
   end
   return nil
-end
-
----@param meta? PyDepsPyPIMeta
----@param version string
----@return boolean
-local function is_version_in_releases(meta, version)
-  if not meta or not meta.releases then
-    return true
-  end
-  return meta.releases[version] ~= nil
 end
 
 ---@param resolved? string
@@ -276,7 +174,7 @@ local function classify(dep)
 
   -- Check pin not found in PyPI releases
   local is_pinned, pinned_version = is_pinned_spec(dep.spec)
-  if is_pinned and pinned_version and dep.meta and not is_version_in_releases(dep.meta, pinned_version) then
+  if is_pinned and pinned_version and dep.meta and not ui_shared.is_version_in_releases(dep.meta, pinned_version) then
     return "pin_not_found"
   end
 
@@ -333,7 +231,7 @@ local function build_badge(dep)
   local show = ui_show()
 
   -- Add icon if enabled
-  local icon = icon_for(kind_for(class))
+  local icon = ui_shared.icon_for(kind_for(class))
   if icon ~= "" then
     table.insert(chunks, { icon .. " ", hl })
   end
@@ -590,10 +488,10 @@ end
 ---@return table
 local function create_dependency_view(bufnr, dep, resolved, current_env, line_cache, lockfile_missing, lockfile_loading)
   -- Evaluate marker if present
-  local marker = extract_marker(dep.spec)
+  local marker = ui_shared.extract_marker(dep.spec)
   local marker_active = true
   if marker then
-    local result = markers.evaluate(marker, with_extra_env(current_env, dep))
+    local result = markers.evaluate(marker, ui_shared.with_extra_env(current_env, dep))
     marker_active = result ~= false
   end
 
@@ -763,7 +661,7 @@ end
 ---Clean up debounce state for a buffer (used by autocmd cleanup)
 ---@param bufnr integer
 function M.clear_debounce_state(bufnr)
-  clear_debounce_state(bufnr)
+  debouncer.clear(bufnr)
 end
 
 return M
