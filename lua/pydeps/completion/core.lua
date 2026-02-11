@@ -32,16 +32,12 @@ local pypi = require("pydeps.providers.pypi")
 local M = {}
 
 -- CompletionItemKind fallback values (from LSP spec)
+local lsp_completion_item_kind = vim.lsp and vim.lsp.protocol and vim.lsp.protocol.CompletionItemKind or {}
 local CompletionItemKind = {
-  Module = 9,
-  Value = 12,
-  EnumMember = 20,
+  Module = lsp_completion_item_kind.Module or 9,
+  Value = lsp_completion_item_kind.Value or 12,
+  EnumMember = lsp_completion_item_kind.EnumMember or 20,
 }
-
--- Use LSP protocol if available, otherwise use fallback
-if vim.lsp and vim.lsp.protocol and CompletionItemKind then
-  CompletionItemKind = CompletionItemKind
-end
 
 ---@param bufnr integer
 ---@param line integer
