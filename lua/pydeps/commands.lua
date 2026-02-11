@@ -372,8 +372,7 @@ function M.tree(args_str, bang, opts)
 
   -- Validate lock file exists when in frozen mode
   if tree_args.frozen then
-    local uv_mod = require("pydeps.providers.uv")
-    if uv_mod.supports_tree_flag("frozen") then
+    if uv.supports_tree_flag("frozen") then
       local _, missing = cache.get_lockfile(root, { sync = true })
       if missing then
         vim.notify(
