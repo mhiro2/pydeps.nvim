@@ -51,6 +51,7 @@ pydeps.nvim brings the **crates.nvim workflow to Python** with a focus on what w
 - 🧩 **Inline badges**: section-aligned, comment-aware UI with icons & highlights
 - ⚡ **Review-first resolve**: `uv lock` + lockfile diff before committing
 - 🧰 **Mismatch detection**: pin vs resolved version + yanked checks on PyPI
+- 🔐 **Security audit**: lockfile-wide vulnerability scan via OSV
 
 ### Optional
 
@@ -141,6 +142,7 @@ pydeps.nvim is configurable via `require("pydeps").setup({ ... })`.
   info_window_border = "rounded",
   select_menu_border = "rounded",
   select_menu_relative = "cursor",
+  audit_window_border = "rounded",
   notify_on_missing_lockfile = true,
   enable_diagnostics = true,
   diagnostic_severity = {
@@ -150,6 +152,8 @@ pydeps.nvim is configurable via `require("pydeps").setup({ ... })`.
   },
   pypi_url = "https://pypi.org/pypi",
   pypi_cache_ttl = 3600,
+  osv_url = "https://api.osv.dev/v1/querybatch",
+  osv_cache_ttl = 3600,
   enable_completion = true,
   completion = {
     pypi_search = true,
@@ -237,6 +241,7 @@ require("blink.cmp").setup({
   - `:PyDepsResolve!` shows diff only (no lock)
 - `:PyDepsWhy [package]` — show transitive provenance for dependency
 - `:PyDepsInfo` — inspect dependency under cursor
+- `:PyDepsAudit` — audit `uv.lock` dependencies against OSV vulnerabilities
 - `:PyDepsTree` — show dependency tree (uses `--frozen` by default)
   - `:PyDepsTree --resolve` skips frozen mode and attempts dependency resolution
 

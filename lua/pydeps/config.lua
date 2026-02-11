@@ -11,11 +11,14 @@
 ---@field info_window_border string
 ---@field select_menu_border string
 ---@field select_menu_relative string
+---@field audit_window_border string
 ---@field notify_on_missing_lockfile boolean
 ---@field enable_diagnostics boolean
 ---@field diagnostic_severity PyDepsDiagnosticSeverity
 ---@field pypi_url string
 ---@field pypi_cache_ttl integer
+---@field osv_url string
+---@field osv_cache_ttl integer
 ---@field enable_completion boolean
 ---@field completion PyDepsCompletionConfig
 
@@ -134,6 +137,7 @@ M.defaults = {
   info_window_border = "rounded",
   select_menu_border = "rounded",
   select_menu_relative = "cursor",
+  audit_window_border = "rounded",
   notify_on_missing_lockfile = true,
   enable_diagnostics = true,
   diagnostic_severity = {
@@ -143,6 +147,8 @@ M.defaults = {
   },
   pypi_url = "https://pypi.org/pypi",
   pypi_cache_ttl = 3600,
+  osv_url = "https://api.osv.dev/v1/querybatch",
+  osv_cache_ttl = 3600,
   enable_completion = true,
   completion = {
     pypi_search = true,
@@ -187,10 +193,13 @@ local function validate_top_level(opts)
   validate_field("info_window_border", opts.info_window_border, "string", true)
   validate_field("select_menu_border", opts.select_menu_border, "string", true)
   validate_field("select_menu_relative", opts.select_menu_relative, "string", true)
+  validate_field("audit_window_border", opts.audit_window_border, "string", true)
   validate_field("notify_on_missing_lockfile", opts.notify_on_missing_lockfile, "boolean", true)
   validate_field("enable_diagnostics", opts.enable_diagnostics, "boolean", true)
   validate_field("pypi_url", opts.pypi_url, "string", true)
   validate_field("pypi_cache_ttl", opts.pypi_cache_ttl, "number", true)
+  validate_field("osv_url", opts.osv_url, "string", true)
+  validate_field("osv_cache_ttl", opts.osv_cache_ttl, "number", true)
   validate_field("enable_completion", opts.enable_completion, "boolean", true)
   validate_field("diagnostic_severity", opts.diagnostic_severity, "table", true)
   validate_field("completion", opts.completion, "table", true)

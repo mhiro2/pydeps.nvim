@@ -39,4 +39,15 @@ T["setup validates nested option types"] = function()
   MiniTest.expect.equality(err:match("pypi_search_min") ~= nil, true)
 end
 
+T["setup accepts osv options"] = function()
+  local config = require("pydeps.config")
+  MiniTest.expect.no_error(function()
+    config.setup({
+      audit_window_border = "single",
+      osv_url = "https://api.osv.dev/v1/querybatch",
+      osv_cache_ttl = 7200,
+    })
+  end)
+end
+
 return T
