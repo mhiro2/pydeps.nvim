@@ -1,7 +1,9 @@
 local cache = require("pydeps.core.cache")
 local config = require("pydeps.config")
+local env = require("pydeps.core.env")
 local project = require("pydeps.core.project")
 local pypi = require("pydeps.providers.pypi")
+local ui_shared = require("pydeps.ui.shared")
 local util = require("pydeps.util")
 
 local M = {}
@@ -265,24 +267,8 @@ local function clamp_window_size(width, height)
   return math.min(width, max_win_width), math.min(height, max_win_height)
 end
 
----@param kind string
----@return string
-icon_for = function(kind)
-  local icons = (config.options.ui and config.options.ui.icons) or {}
-  if icons.enabled == false then
-    return (icons.fallback and icons.fallback[kind]) or ""
-  end
-  return icons[kind] or (icons.fallback and icons.fallback[kind]) or ""
-end
-
----@param spec? string
----@return string?
-local function extract_marker(spec)
-  if not spec then
-    return nil
-  end
-  return spec:match(";%s*(.+)$")
-end
+icon_for = ui_shared.icon_for
+local extract_marker = ui_shared.extract_marker
 
 -- Column alignment constants
 -- Max label width: with icon = ~9 chars (e.g., " spec")
@@ -376,22 +362,21 @@ end
 ---@return PyDepsStatusResult
 local function determine_status(dep, resolved, meta, root)
   local markers = require("pydeps.core.markers")
-  local env_module = require("pydeps.core.env")
-  local env = vim.tbl_deep_extend("force", {}, env_module.get(root))
+  local marker_env = vim.tbl_deep_extend("force", {}, env.get(root))
 
   -- Add extra/group to env for marker evaluation
   if dep.group then
     if dep.group:match("^optional:") then
-      env.extra = dep.group:sub(#"optional:" + 1)
+      marker_env.extra = dep.group:sub(#"optional:" + 1)
     elseif dep.group:match("^group:") then
-      env.group = dep.group:sub(#"group:" + 1)
+      marker_env.group = dep.group:sub(#"group:" + 1)
     end
   end
 
   -- Check inactive (markers)
   local marker = extract_marker(dep.spec)
-  if marker and env and env.python_version then
-    local is_active = markers.evaluate(marker, env)
+  if marker and marker_env and marker_env.python_version then
+    local is_active = markers.evaluate(marker, marker_env)
     if not is_active then
       return {
         kind = "inactive",
@@ -544,8 +529,8 @@ local function build_lines(dep, resolved, opts, meta)
   local status_text = format_status_text(status.kind)
   local status_suffix = ""
   if status.kind == "inactive" then
-    local env = require("pydeps.core.env").get(root)
-    local python_ver = env.python_full_version or env.python_version or "unknown"
+    local runtime_env = env.get(root)
+    local python_ver = runtime_env.python_full_version or runtime_env.python_version or "unknown"
     status_suffix = "(python " .. python_ver .. ")"
   end
   table.insert(lines, format_line(status_icon, "status", status_text, status_suffix))
@@ -640,22 +625,48 @@ local function setup_hover_keybindings(dep, source_buf)
   )
 end
 
----@param dep? PyDepsDependency
----@param resolved? string
----@param opts? PyDepsRenderOptions
-function M.show(dep, resolved, opts)
-  if not dep then
-    vim.notify("pydeps: dependency not found under cursor", vim.log.levels.WARN)
-    return
-  end
+---@class PyDepsInfoHoverWindowOptions
+---@field zindex? integer
 
-  -- Close existing hover window
+---@param lines string[]
+---@return integer, integer
+local function hover_window_size(lines)
+  local width = max_width(lines) + 2
+  local height = #lines
+  return clamp_window_size(width, height)
+end
+
+---@param width integer
+---@param height integer
+---@param window_opts? PyDepsInfoHoverWindowOptions
+---@return table
+local function hover_win_config(width, height, window_opts)
+  local cfg = {
+    relative = "cursor",
+    row = 1,
+    col = 0,
+    width = width,
+    height = height,
+    style = "minimal",
+    border = config.options.info_window_border or "rounded",
+  }
+  if window_opts and window_opts.zindex then
+    cfg.zindex = window_opts.zindex
+  end
+  return cfg
+end
+
+---@param dep PyDepsDependency
+---@param resolved? string
+---@param opts PyDepsRenderOptions
+---@param source_buf integer
+---@param window_opts? PyDepsInfoHoverWindowOptions
+---@return nil
+local function render_hover(dep, resolved, opts, source_buf, window_opts)
   M.close_hover()
 
   local generation = next_generation()
-
-  opts = opts or {}
-
+  local root = opts.root
   local lines = build_lines(dep, resolved, opts, nil)
 
   resources.buf_id = vim.api.nvim_create_buf(false, true)
@@ -664,29 +675,14 @@ function M.show(dep, resolved, opts)
   vim.bo[resources.buf_id].modifiable = false
   local buf_id = resources.buf_id
 
-  local width = max_width(lines) + 2
-  local height = #lines
-  width, height = clamp_window_size(width, height)
-
-  resources.win_id = vim.api.nvim_open_win(resources.buf_id, false, {
-    relative = "cursor",
-    row = 1,
-    col = 0,
-    width = width,
-    height = height,
-    style = "minimal",
-    border = config.options.info_window_border or "rounded",
-  })
+  local width, height = hover_window_size(lines)
+  resources.win_id = vim.api.nvim_open_win(resources.buf_id, false, hover_win_config(width, height, window_opts))
   local win_id = resources.win_id
-
   vim.api.nvim_set_option_value("wrap", false, { win = resources.win_id })
 
-  local source_buf = vim.api.nvim_get_current_buf()
   setup_hover_keybindings(dep, source_buf)
   setup_hover_buffer_keymaps()
 
-  -- Calculate status for highlighting
-  local root = opts and opts.root
   local status = determine_status(dep, resolved, nil, root)
   apply_info_highlights(resources.buf_id, dep, lines, status)
 
@@ -697,27 +693,32 @@ function M.show(dep, resolved, opts)
     if resources.buf_id ~= buf_id or not vim.api.nvim_buf_is_valid(buf_id) then
       return
     end
+
     local updated = build_lines(dep, resolved, opts, meta)
     vim.bo[buf_id].modifiable = true
     vim.api.nvim_buf_set_lines(buf_id, 0, -1, false, updated)
     vim.bo[buf_id].modifiable = false
+
     local updated_status = determine_status(dep, resolved, meta, root)
     apply_info_highlights(buf_id, dep, updated, updated_status)
-    width = max_width(updated) + 2
-    height = #updated
-    width, height = clamp_window_size(width, height)
+
+    local new_width, new_height = hover_window_size(updated)
     if resources.win_id == win_id and vim.api.nvim_win_is_valid(win_id) then
-      vim.api.nvim_win_set_config(win_id, {
-        relative = "cursor",
-        row = 1,
-        col = 0,
-        width = width,
-        height = height,
-        style = "minimal",
-        border = config.options.info_window_border or "rounded",
-      })
+      vim.api.nvim_win_set_config(win_id, hover_win_config(new_width, new_height, window_opts))
     end
   end)
+end
+
+---@param dep? PyDepsDependency
+---@param resolved? string
+---@param opts? PyDepsRenderOptions
+function M.show(dep, resolved, opts)
+  if not dep then
+    vim.notify("pydeps: dependency not found under cursor", vim.log.levels.WARN)
+    return
+  end
+
+  render_hover(dep, resolved, opts or {}, vim.api.nvim_get_current_buf())
 end
 
 ---Close the hover window if it exists
@@ -749,23 +750,19 @@ function M.should_close_hover()
   return not suppress_hover_close
 end
 
----Show hover info for dependency under cursor
----@return nil
-function M.show_at_cursor()
+---@return PyDepsDependency?, string?, PyDepsRenderOptions?, integer?
+local function cursor_hover_context()
   local bufnr = vim.api.nvim_get_current_buf()
 
-  -- Check if we're in a pyproject.toml buffer
   local name = vim.api.nvim_buf_get_name(bufnr)
   if not name:match("pyproject%.toml$") then
-    M.close_hover()
-    return
+    return nil, nil, nil, bufnr
   end
 
   local deps = cache.get_pyproject(bufnr)
   local dep = util.dep_under_cursor(deps)
   if not dep then
-    M.close_hover()
-    return
+    return nil, nil, nil, bufnr
   end
 
   local root = project.find_root(bufnr)
@@ -777,81 +774,24 @@ function M.show_at_cursor()
     missing_lockfile = missing
   end
 
-  local resolved_version = resolved[dep.name]
-
-  -- Close existing hover window
-  M.close_hover()
-
-  local generation = next_generation()
-
-  local opts = {
+  return dep, resolved[dep.name], {
     lockfile_missing = missing_lockfile,
     root = root,
-  }
+  }, bufnr
+end
 
-  local lines = build_lines(dep, resolved_version, opts, nil)
+---Show hover info for dependency under cursor
+---@return nil
+function M.show_at_cursor()
+  local dep, resolved, opts, source_buf = cursor_hover_context()
+  if not dep then
+    M.close_hover()
+    return
+  end
 
-  resources.buf_id = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(resources.buf_id, 0, -1, false, lines)
-  vim.bo[resources.buf_id].bufhidden = "wipe"
-  vim.bo[resources.buf_id].modifiable = false
-  local buf_id = resources.buf_id
-
-  local width = max_width(lines) + 2
-  local height = #lines
-  width, height = clamp_window_size(width, height)
-
-  resources.win_id = vim.api.nvim_open_win(resources.buf_id, false, {
-    relative = "cursor",
-    row = 1,
-    col = 0,
-    width = width,
-    height = height,
-    style = "minimal",
-    border = config.options.info_window_border or "rounded",
+  render_hover(dep, resolved, opts or {}, source_buf or vim.api.nvim_get_current_buf(), {
     zindex = 50,
   })
-  local win_id = resources.win_id
-
-  vim.api.nvim_set_option_value("wrap", false, { win = resources.win_id })
-
-  setup_hover_keybindings(dep, bufnr)
-  setup_hover_buffer_keymaps()
-
-  -- Calculate status for highlighting
-  local status = determine_status(dep, resolved_version, nil, root)
-  apply_info_highlights(resources.buf_id, dep, lines, status)
-
-  -- Fetch PyPI data and update
-  pypi.get(dep.name, function(meta)
-    if generation ~= info_generation then
-      return
-    end
-    if resources.buf_id ~= buf_id or not vim.api.nvim_buf_is_valid(buf_id) then
-      return
-    end
-    local updated = build_lines(dep, resolved_version, opts, meta)
-    vim.bo[buf_id].modifiable = true
-    vim.api.nvim_buf_set_lines(buf_id, 0, -1, false, updated)
-    vim.bo[buf_id].modifiable = false
-    local updated_status = determine_status(dep, resolved_version, meta, root)
-    apply_info_highlights(buf_id, dep, updated, updated_status)
-    local new_width = max_width(updated) + 2
-    local new_height = #updated
-    new_width, new_height = clamp_window_size(new_width, new_height)
-    if resources.win_id == win_id and vim.api.nvim_win_is_valid(win_id) then
-      vim.api.nvim_win_set_config(win_id, {
-        relative = "cursor",
-        row = 1,
-        col = 0,
-        width = new_width,
-        height = new_height,
-        style = "minimal",
-        border = config.options.info_window_border or "rounded",
-        zindex = 50,
-      })
-    end
-  end)
 end
 
 return M

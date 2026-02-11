@@ -54,7 +54,7 @@ end
 ---@return boolean
 function M.is_available()
   -- Check if vim.treesitter is available
-  if not vim.treesitter then
+  if not vim.treesitter or not vim.treesitter.language then
     return false
   end
 
@@ -63,19 +63,22 @@ function M.is_available()
     return M._available
   end
 
-  -- Try to create a test parser to verify toml is available
-  local ok = pcall(function()
-    local bufnr = vim.api.nvim_create_buf(false, true)
-    vim.bo[bufnr].filetype = "toml"
-    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "test = 1" })
-    local parser = vim.treesitter.get_parser(bufnr, "toml")
-    local tree = parser:parse()
-    vim.api.nvim_buf_delete(bufnr, { force = true })
-    return tree ~= nil
-  end)
+  local ok_lang, lang = pcall(vim.treesitter.language.get_lang, "toml")
+  if not ok_lang or not lang then
+    M._available = false
+    return false
+  end
 
-  M._available = ok
-  return ok
+  local inspect_language = vim.treesitter.language.inspect
+  if type(inspect_language) == "function" then
+    local ok_inspect = pcall(inspect_language, lang)
+    M._available = ok_inspect
+    return ok_inspect
+  end
+
+  -- Fallback for older Tree-sitter API shapes.
+  M._available = true
+  return true
 end
 
 ---Get the Tree-sitter parser for a buffer

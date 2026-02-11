@@ -198,12 +198,6 @@ local function ensure_autocmds()
       M.refresh_all()
     end,
   })
-  vim.api.nvim_create_autocmd("ColorScheme", {
-    group = augroup_id,
-    callback = function()
-      virtual_text.setup_highlights()
-    end,
-  })
   -- CursorHold for hover info
   vim.api.nvim_create_autocmd("CursorHold", {
     group = augroup_id,
