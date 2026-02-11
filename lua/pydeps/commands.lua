@@ -30,6 +30,24 @@ local function parse_buffer_deps(bufnr)
   return cache.get_pyproject(bufnr)
 end
 
+---@param lock_data PyDepsLockfileData
+---@return PyDepsAuditPackage[]
+local function collect_lock_packages(lock_data)
+  local packages = {}
+  for name, package in pairs(lock_data.packages or {}) do
+    if type(package) == "table" and package.version then
+      table.insert(packages, {
+        name = package.name or name,
+        version = package.version,
+      })
+    end
+  end
+  table.sort(packages, function(a, b)
+    return a.name < b.name
+  end)
+  return packages
+end
+
 ---@param root string
 ---@return nil
 local function show_lock_diff(root)
@@ -468,6 +486,50 @@ function M.info()
     end
   end
   info.show(target, target and resolved[target.name] or nil, { lockfile_missing = missing_lockfile })
+end
+
+---@return nil
+function M.audit()
+  local bufnr = current_buf()
+  local root = project.find_root(bufnr)
+  if not root then
+    vim.notify("pydeps: project root not found", vim.log.levels.WARN)
+    return
+  end
+
+  local lock_data, missing = cache.get_lockfile(root, { sync = true })
+  if missing then
+    vim.notify("pydeps: uv.lock not found", vim.log.levels.WARN)
+    return
+  end
+
+  local packages = collect_lock_packages(lock_data)
+  if #packages == 0 then
+    vim.notify("pydeps: no lockfile packages found", vim.log.levels.WARN)
+    return
+  end
+
+  vim.notify("pydeps: running OSV audit", vim.log.levels.INFO)
+  local osv = require("pydeps.providers.osv")
+  local security_audit = require("pydeps.ui.security_audit")
+  osv.audit(packages, function(results, err)
+    local summary = security_audit.show(results, {
+      root = root,
+      error = err,
+    })
+
+    util.emit_user_autocmd("PyDepsAuditCompleted", {
+      root = root,
+      scanned = summary.scanned_packages,
+      vulnerable_packages = summary.vulnerable_packages,
+      vulnerabilities = summary.total_vulnerabilities,
+      error = err,
+    })
+
+    if err then
+      vim.notify("pydeps: OSV audit completed with errors: " .. err, vim.log.levels.WARN)
+    end
+  end)
 end
 
 ---@return nil

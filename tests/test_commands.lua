@@ -175,4 +175,95 @@ T["update escapes pattern characters in version spec"] = function()
   package.loaded["pydeps.providers.pypi"] = original_pypi
 end
 
+T["audit collects lockfile packages and renders result"] = function()
+  local original_commands = package.loaded["pydeps.commands"]
+  local original_osv = package.loaded["pydeps.providers.osv"]
+  local original_security_audit = package.loaded["pydeps.ui.security_audit"]
+
+  local captured_packages = nil
+  local captured_show = nil
+  package.loaded["pydeps.commands"] = nil
+  package.loaded["pydeps.providers.osv"] = {
+    audit = function(packages, cb)
+      captured_packages = packages
+      cb({
+        {
+          name = "requests",
+          version = "2.31.0",
+          vulnerabilities = {},
+        },
+      }, nil)
+    end,
+  }
+  package.loaded["pydeps.ui.security_audit"] = {
+    show = function(results, opts)
+      captured_show = { results = results, opts = opts }
+      return {
+        scanned_packages = 2,
+        vulnerable_packages = 0,
+        total_vulnerabilities = 0,
+      }
+    end,
+  }
+
+  local commands = require("pydeps.commands")
+  local dir = create_project({
+    "[project]",
+    'dependencies = ["requests", "urllib3"]',
+  }, {
+    requests = "2.31.0",
+    urllib3 = "2.2.0",
+  })
+
+  commands.audit()
+  vim.wait(200, function()
+    return captured_show ~= nil
+  end, 10)
+
+  MiniTest.expect.equality(captured_packages ~= nil, true)
+  MiniTest.expect.equality(#captured_packages, 2)
+  MiniTest.expect.equality(captured_packages[1].name, "requests")
+  MiniTest.expect.equality(captured_packages[2].name, "urllib3")
+  local actual_root = vim.uv.fs_realpath(captured_show.opts.root) or captured_show.opts.root
+  local expected_root = vim.uv.fs_realpath(dir) or dir
+  MiniTest.expect.equality(actual_root, expected_root)
+  MiniTest.expect.equality(captured_show.results[1].name, "requests")
+
+  cleanup(dir)
+  package.loaded["pydeps.commands"] = original_commands
+  package.loaded["pydeps.providers.osv"] = original_osv
+  package.loaded["pydeps.ui.security_audit"] = original_security_audit
+end
+
+T["audit warns when uv.lock is missing"] = function()
+  local original_commands = package.loaded["pydeps.commands"]
+  package.loaded["pydeps.commands"] = nil
+  local commands = require("pydeps.commands")
+
+  local dir = create_project({
+    "[project]",
+    'dependencies = ["requests"]',
+  }, {
+    requests = "2.31.0",
+  })
+
+  local lock_path = dir .. "/uv.lock"
+  vim.fn.delete(lock_path)
+
+  local notified = false
+  local original_notify = vim.notify
+  vim.notify = function(msg, _level)
+    if msg:match("uv%.lock not found") then
+      notified = true
+    end
+  end
+
+  commands.audit()
+
+  vim.notify = original_notify
+  MiniTest.expect.equality(notified, true)
+  cleanup(dir)
+  package.loaded["pydeps.commands"] = original_commands
+end
+
 return T

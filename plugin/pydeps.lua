@@ -21,3 +21,7 @@ end, { nargs = "?" })
 vim.api.nvim_create_user_command("PyDepsInfo", function()
   require("pydeps.commands").info()
 end, {})
+
+vim.api.nvim_create_user_command("PyDepsAudit", function()
+  require("pydeps.commands").audit()
+end, {})

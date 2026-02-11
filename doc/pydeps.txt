@@ -49,7 +49,7 @@ Required:
 
 Optional (but recommended):
   • Python (python3 or python) - for environment detection
-  • curl or Python - for PyPI features (completion, info, diagnostics)
+  • curl or Python - for PyPI/OSV features (completion, info, diagnostics, audit)
 
 ==============================================================================
 3. INSTALLATION                                           *pydeps-installation*
@@ -120,6 +120,14 @@ pydeps.setup({opts})                                           *pydeps.setup()*
       • lock: Whether lock is up-to-date or out-of-date
       • markers: PEP 508 marker expression (if present)
       • group/extra: Dependency group or extra (if present)
+
+:PyDepsAudit                                                    *:PyDepsAudit*
+    Audit all resolved dependencies in uv.lock against OSV.
+    Opens a floating report window with:
+      • scanned package count
+      • vulnerable package count
+      • vulnerability details (severity, id, summary, fixed version)
+    If uv.lock is missing, shows a warning and exits.
 
 :PyDepsTree [options]                                            *:PyDepsTree*
     Show dependency tree by running `uv tree`.
@@ -262,6 +270,22 @@ notify_on_missing_lockfile          (boolean, default: true)
 
 info_window_border                  (string, default: "rounded")
     Border style for info window (see |nvim_open_win()|).
+
+select_menu_border                  (string, default: "rounded")
+    Border style for select menu window.
+
+select_menu_relative                (string, default: "cursor")
+    Relative position for select menu window.
+
+audit_window_border                 (string, default: "rounded")
+    Border style for audit report window.
+
+                                                              *pydeps-config-osv*
+osv_url                             (string, default: "https://api.osv.dev/v1/querybatch")
+    OSV query batch endpoint URL.
+
+osv_cache_ttl                       (number, default: 3600)
+    Time to live for OSV cache in seconds.
 
 ==============================================================================
 7. COMPLETION                                               *pydeps-completion*
