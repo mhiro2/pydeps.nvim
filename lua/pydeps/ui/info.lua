@@ -1,5 +1,6 @@
 local cache = require("pydeps.core.cache")
 local config = require("pydeps.config")
+local env = require("pydeps.core.env")
 local project = require("pydeps.core.project")
 local pypi = require("pydeps.providers.pypi")
 local ui_shared = require("pydeps.ui.shared")
@@ -361,22 +362,21 @@ end
 ---@return PyDepsStatusResult
 local function determine_status(dep, resolved, meta, root)
   local markers = require("pydeps.core.markers")
-  local env_module = require("pydeps.core.env")
-  local env = vim.tbl_deep_extend("force", {}, env_module.get(root))
+  local marker_env = vim.tbl_deep_extend("force", {}, env.get(root))
 
   -- Add extra/group to env for marker evaluation
   if dep.group then
     if dep.group:match("^optional:") then
-      env.extra = dep.group:sub(#"optional:" + 1)
+      marker_env.extra = dep.group:sub(#"optional:" + 1)
     elseif dep.group:match("^group:") then
-      env.group = dep.group:sub(#"group:" + 1)
+      marker_env.group = dep.group:sub(#"group:" + 1)
     end
   end
 
   -- Check inactive (markers)
   local marker = extract_marker(dep.spec)
-  if marker and env and env.python_version then
-    local is_active = markers.evaluate(marker, env)
+  if marker and marker_env and marker_env.python_version then
+    local is_active = markers.evaluate(marker, marker_env)
     if not is_active then
       return {
         kind = "inactive",
@@ -529,8 +529,8 @@ local function build_lines(dep, resolved, opts, meta)
   local status_text = format_status_text(status.kind)
   local status_suffix = ""
   if status.kind == "inactive" then
-    local env = require("pydeps.core.env").get(root)
-    local python_ver = env.python_full_version or env.python_version or "unknown"
+    local runtime_env = env.get(root)
+    local python_ver = runtime_env.python_full_version or runtime_env.python_version or "unknown"
     status_suffix = "(python " .. python_ver .. ")"
   end
   table.insert(lines, format_line(status_icon, "status", status_text, status_suffix))
