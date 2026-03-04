@@ -29,6 +29,8 @@ local uv = vim.uv
 
 -- Request timeout in milliseconds
 local REQUEST_TIMEOUT = 10000
+-- Search failure backoff in seconds
+local SEARCH_FAILURE_BACKOFF = 60
 
 ---@type table<string, PyDepsPyPICacheEntry>
 local cache = {}
@@ -38,14 +40,21 @@ local pending = {}
 local timers = {}
 ---@type boolean
 local notified = false
----@type string[]?
-local simple_index_names = nil
----@type number
-local simple_index_updated_at = 0
----@type boolean
-local simple_index_loading = false
----@type fun(names: string[]?)[]
-local simple_index_callbacks = {}
+
+---@class PyDepsPyPISearchCacheEntry
+---@field results string[]
+---@field time number
+---@field failed? boolean
+---@field retry_after? number
+
+---@type table<string, PyDepsPyPISearchCacheEntry>
+local search_cache = {}
+---@type table<string, boolean>
+local search_loading = {}
+---@type table<string, uv_timer_t>
+local search_timers = {}
+---@type table<string, fun(results: string[])[]>
+local search_pending = {}
 
 ---@param name? string
 ---@return string
@@ -115,6 +124,17 @@ local function notify_once(msg)
   vim.notify(msg, vim.log.levels.WARN)
 end
 
+---@return string?
+local function resolve_python()
+  if vim.fn.executable("python3") == 1 then
+    return "python3"
+  end
+  if vim.fn.executable("python") == 1 then
+    return "python"
+  end
+  return nil
+end
+
 ---@param payload string
 ---@return table?
 local function decode_json(payload)
@@ -170,17 +190,17 @@ local function run_request(cmd, name)
     stderr_buffered = true,
     on_stdout = function(_, data)
       if data then
-        stdout = data
+        vim.list_extend(stdout, data)
       end
     end,
     on_stderr = function(_, data)
       if data then
-        stderr = data
+        vim.list_extend(stderr, data)
       end
     end,
     on_exit = function(_, code, _)
-      local payload = table.concat(stdout or {}, "\n")
-      local err = table.concat(stderr or {}, "\n")
+      local payload = table.concat(stdout, "\n")
+      local err = table.concat(stderr, "\n")
       local decoded = nil
       if payload ~= "" then
         decoded = decode_json(payload)
@@ -225,55 +245,86 @@ local function request_url(name)
   return string.format("%s/%s/json", base, name)
 end
 
----@return boolean
-local function simple_index_cache_valid()
-  if not simple_index_names then
-    return false
-  end
-  local ttl = config.options.pypi_cache_ttl or 3600
-  return (util.now() - simple_index_updated_at) <= ttl
+---@return number
+local function pypi_cache_ttl()
+  return config.options.pypi_cache_ttl or 3600
 end
 
----@type fun(script: string, args: string[]?, cb: fun(result: table?)): nil
-local run_python_json
+---@param value string
+---@return string
+local function url_encode(value)
+  return (value:gsub("[^%w%-%._~]", function(ch)
+    return string.format("%%%02X", string.byte(ch))
+  end))
+end
 
----@param cb fun(names: string[]?)
+---@return string
+local function pypi_base_url()
+  local configured = config.options.pypi_url or "https://pypi.org/pypi"
+  local base = configured:gsub("/pypi/?$", "")
+  base = base:gsub("/+$", "")
+  if base == "" then
+    return "https://pypi.org"
+  end
+  return base
+end
+
+---@param query string
+---@return string?
+local function search_url(query)
+  if not is_valid_package_name(query) then
+    return nil
+  end
+  return string.format("%s/search/?q=%s", pypi_base_url(), url_encode(query))
+end
+
+---@param query string
+---@return string[]?, boolean
+local function cached_search_entry(query)
+  local entry = search_cache[query]
+  if not entry then
+    return nil, false
+  end
+  if entry.failed and entry.retry_after and util.now() < entry.retry_after then
+    return nil, true
+  end
+  if entry.failed and entry.retry_after and util.now() >= entry.retry_after then
+    search_cache[query] = nil
+    return nil, false
+  end
+  if (util.now() - entry.time) > pypi_cache_ttl() then
+    search_cache[query] = nil
+    return nil, false
+  end
+  return entry.results, false
+end
+
+---@param query string
+---@param results string[]
+---@param failed? boolean
 ---@return nil
-local function with_simple_index(cb)
-  if simple_index_cache_valid() then
-    cb(simple_index_names)
+local function set_search_cache(query, results, failed)
+  local now = util.now()
+  search_cache[query] = {
+    results = results,
+    time = now,
+    failed = failed == true or nil,
+    retry_after = failed and (now + SEARCH_FAILURE_BACKOFF) or nil,
+  }
+end
+
+---@param query string
+---@param results string[]
+---@return nil
+local function flush_search_callbacks(query, results)
+  local callbacks = search_pending[query] or {}
+  search_pending[query] = nil
+  if #callbacks == 0 then
     return
   end
-
-  table.insert(simple_index_callbacks, cb)
-  if simple_index_loading then
-    return
-  end
-  simple_index_loading = true
-
-  local script = table.concat({
-    "import json,sys,urllib.request",
-    "req=urllib.request.Request(sys.argv[1], headers={'Accept': 'application/vnd.pypi.simple.v1+json'})",
-    "with urllib.request.urlopen(req) as r:",
-    "  data=json.loads(r.read().decode('utf-8'))",
-    "projects=data.get('projects') or []",
-    "names=sorted({p.get('name') for p in projects if p.get('name')})",
-    "print(json.dumps(names))",
-  }, "\n")
-
-  run_python_json(script, { "https://pypi.org/simple/" }, function(result)
-    local names = nil
-    if type(result) == "table" then
-      names = result
-      simple_index_names = result
-      simple_index_updated_at = util.now()
-    end
-
-    simple_index_loading = false
-    local callbacks = simple_index_callbacks
-    simple_index_callbacks = {}
+  vim.schedule(function()
     for _, callback in ipairs(callbacks) do
-      callback(names)
+      callback(results)
     end
   end)
 end
@@ -298,72 +349,153 @@ local function filter_prefix(names, query, limit)
   return results
 end
 
----@param script string
----@param args? string[]
----@param cb fun(result: table?)
+---@param names string[]
+---@param seen table<string, boolean>
+---@param name string
 ---@return nil
-run_python_json = function(script, args, cb)
-  local python = nil
-  if vim.fn.executable("python3") == 1 then
-    python = "python3"
-  elseif vim.fn.executable("python") == 1 then
-    python = "python"
-  end
-  if not python then
-    notify_once("pydeps: python not found; PyPI search disabled")
-    cb(nil)
+local function add_search_name(names, seen, name)
+  local normalized = normalize(util.trim(name))
+  if normalized == "" then
     return
   end
-  local cmd = { python, "-c", script }
-  for _, arg in ipairs(args or {}) do
-    table.insert(cmd, arg)
+  if not is_valid_package_name(normalized) or seen[normalized] then
+    return
   end
+  seen[normalized] = true
+  table.insert(names, normalized)
+end
+
+---@param payload string
+---@return string[]
+local function parse_search_payload(payload)
+  local names = {}
+  local seen = {}
+
+  for name in payload:gmatch("package%-snippet__name[^>]*>%s*([^<]+)%s*<") do
+    add_search_name(names, seen, name)
+  end
+
+  if #names == 0 then
+    for name in payload:gmatch("/project/([%w%._%-]+)/") do
+      add_search_name(names, seen, name)
+    end
+  end
+
+  return names
+end
+
+---@param cmd string[]
+---@param query string
+---@return nil
+local function run_search_request(cmd, query)
+  local normalized_query = normalize(query)
   local stdout = {}
+  local stderr = {}
   local completed = false
-  local timer = nil
+
+  ---@param results string[]
+  ---@param failed? boolean
+  ---@return nil
+  local function finish(results, failed)
+    if completed then
+      return
+    end
+    completed = true
+    util.safe_close_timer(search_timers[normalized_query])
+    search_timers[normalized_query] = nil
+    search_loading[normalized_query] = nil
+    set_search_cache(normalized_query, results, failed)
+    flush_search_callbacks(normalized_query, results)
+  end
 
   local job_id = vim.fn.jobstart(cmd, {
     stdout_buffered = true,
     stderr_buffered = true,
     on_stdout = function(_, data)
       if data then
-        stdout = data
+        vim.list_extend(stdout, data)
       end
     end,
-    on_exit = function()
-      util.safe_close_timer(timer)
-      timer = nil
-
-      if not completed then
-        completed = true
-        local payload = table.concat(stdout or {}, "\n")
-        cb(decode_json(payload))
+    on_stderr = function(_, data)
+      if data then
+        vim.list_extend(stderr, data)
       end
+    end,
+    on_exit = function(_, code)
+      local err = util.trim(table.concat(stderr, "\n"))
+      if code ~= 0 or err ~= "" then
+        finish({}, true)
+        return
+      end
+
+      local payload = table.concat(stdout, "\n")
+      if payload == "" then
+        finish({}, true)
+        return
+      end
+
+      finish(parse_search_payload(payload), false)
     end,
   })
 
   if job_id <= 0 then
-    vim.notify(
-      "pydeps: Failed to execute Python. Please ensure Python is installed and accessible.",
-      vim.log.levels.ERROR
-    )
-    cb(nil)
+    search_loading[normalized_query] = nil
+    set_search_cache(normalized_query, {}, true)
+    flush_search_callbacks(normalized_query, {})
+    vim.notify("pydeps: Failed to execute PyPI search command.", vim.log.levels.ERROR)
     return
   end
 
-  -- Set up timeout timer
-  timer = uv.new_timer()
-  timer:start(REQUEST_TIMEOUT, 0, function()
-    util.safe_close_timer(timer)
-    timer = nil
-    if not completed then
-      completed = true
-      vim.schedule(function()
-        vim.fn.jobstop(job_id)
-        cb(nil)
-      end)
+  search_timers[normalized_query] = uv.new_timer()
+  search_timers[normalized_query]:start(REQUEST_TIMEOUT, 0, function()
+    if completed then
+      return
     end
+    vim.schedule(function()
+      vim.fn.jobstop(job_id)
+    end)
+    finish({}, true)
   end)
+end
+
+---@param query string
+---@return nil
+local function refresh_search_cache(query)
+  local normalized_query = normalize(query)
+  if search_loading[normalized_query] then
+    return
+  end
+  search_loading[normalized_query] = true
+
+  local url = search_url(normalized_query)
+  if not url then
+    search_loading[normalized_query] = nil
+    set_search_cache(normalized_query, {}, false)
+    flush_search_callbacks(normalized_query, {})
+    return
+  end
+
+  if vim.fn.executable("curl") == 1 then
+    run_search_request({ "curl", "-fsSL", url }, normalized_query)
+    return
+  end
+
+  local python = resolve_python()
+  if python then
+    local script = table.concat({
+      "import sys,urllib.request",
+      "with urllib.request.urlopen(sys.argv[1]) as r:",
+      "  data=r.read().decode('utf-8', errors='ignore')",
+      "print(data)",
+    }, "\n")
+    run_search_request({ python, "-c", script, url }, normalized_query)
+    return
+  end
+
+  search_loading[normalized_query] = nil
+  notify_once("pydeps: curl/python not found; PyPI search disabled")
+  set_search_cache(normalized_query, {}, true)
+  flush_search_callbacks(normalized_query, {})
 end
 
 ---@param name string
@@ -423,16 +555,18 @@ function M.get(name, cb)
   end
   if vim.fn.executable("curl") == 1 then
     run_request({ "curl", "-fsSL", url }, normalized)
-  elseif vim.fn.executable("python3") == 1 or vim.fn.executable("python") == 1 then
-    local python = vim.fn.executable("python3") == 1 and "python3" or "python"
-    local script = table.concat({
-      "import json,sys,urllib.request",
-      "with urllib.request.urlopen(sys.argv[1]) as r:",
-      "  data=r.read().decode('utf-8')",
-      "print(data)",
-    }, "\n")
-    run_request({ python, "-c", script, url }, normalized)
   else
+    local python = resolve_python()
+    if python then
+      local script = table.concat({
+        "import json,sys,urllib.request",
+        "with urllib.request.urlopen(sys.argv[1]) as r:",
+        "  data=r.read().decode('utf-8')",
+        "print(data)",
+      }, "\n")
+      run_request({ python, "-c", script, url }, normalized)
+      return
+    end
     notify_once("pydeps: curl/python not found; PyPI features disabled")
     local callbacks = pending[normalized] or {}
     pending[normalized] = nil
@@ -450,23 +584,35 @@ function M.search(query, cb)
     cb({})
     return
   end
+
   local normalized_query = normalize(query)
   if not is_valid_package_name(normalized_query) then
     cb({})
     return
   end
+
   local max_results = 30
   if config.options.completion and config.options.completion.max_results then
     max_results = config.options.completion.max_results
   end
 
-  with_simple_index(function(names)
-    if not names then
-      cb({})
-      return
-    end
-    cb(filter_prefix(names, normalized_query, max_results))
+  local cached, is_backoff = cached_search_entry(normalized_query)
+  if cached then
+    cb(filter_prefix(cached, normalized_query, max_results))
+    return
+  end
+  if is_backoff then
+    cb({})
+    return
+  end
+
+  if not search_pending[normalized_query] then
+    search_pending[normalized_query] = {}
+  end
+  table.insert(search_pending[normalized_query], function(results)
+    cb(filter_prefix(results, normalized_query, max_results))
   end)
+  refresh_search_cache(normalized_query)
 end
 
 ---@param data? PyDepsPyPIMeta
