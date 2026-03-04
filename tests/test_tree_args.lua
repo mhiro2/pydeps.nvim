@@ -158,4 +158,17 @@ T["frozen remains true without --resolve"] = function()
   MiniTest.expect.equality(result.depth, 2)
 end
 
+T["parse collects unknown options"] = function()
+  local result = tree_args.parse("--unknown --depth 2 --bad-flag requests", false)
+  MiniTest.expect.equality(result.depth, 2)
+  MiniTest.expect.equality(result.target, "requests")
+  MiniTest.expect.equality(result.unknown_options[1], "--unknown")
+  MiniTest.expect.equality(result.unknown_options[2], "--bad-flag")
+end
+
+T["parse has empty unknown option list by default"] = function()
+  local result = tree_args.parse("--depth 2 requests", false)
+  MiniTest.expect.equality(#result.unknown_options, 0)
+end
+
 return T

@@ -381,6 +381,9 @@ function M.tree(args_str, bang, opts)
   end
 
   local tree_args = require("pydeps.core.tree_args").parse(args_str, bang)
+  if #tree_args.unknown_options > 0 then
+    vim.notify("pydeps: unknown tree options: " .. table.concat(tree_args.unknown_options, ", "), vim.log.levels.WARN)
+  end
   local bufnr = current_buf()
   local root = project.find_root(bufnr)
   if not root then

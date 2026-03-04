@@ -266,4 +266,52 @@ T["audit warns when uv.lock is missing"] = function()
   package.loaded["pydeps.commands"] = original_commands
 end
 
+T["tree warns on unknown options and still invokes uv tree"] = function()
+  local original_uv = package.loaded["pydeps.providers.uv"]
+  package.loaded["pydeps.providers.uv"] = {
+    tree_features_ready = function()
+      return true
+    end,
+    detect_tree_features = function(cb)
+      if cb then
+        cb()
+      end
+    end,
+    supports_tree_flag = function()
+      return false
+    end,
+    tree = function() end,
+  }
+
+  local commands = require("pydeps.commands")
+  local dir = create_project({
+    "[project]",
+    'dependencies = ["requests>=2"]',
+  })
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.bo[bufnr].filetype = "toml"
+
+  local notified = false
+  local uv_tree_called = false
+  package.loaded["pydeps.providers.uv"].tree = function()
+    uv_tree_called = true
+  end
+
+  local original_notify = vim.notify
+  vim.notify = function(msg, _level)
+    if msg:match("unknown tree options") then
+      notified = true
+    end
+  end
+
+  commands.tree("--unknown requests", false, {})
+
+  vim.notify = original_notify
+  MiniTest.expect.equality(notified, true)
+  MiniTest.expect.equality(uv_tree_called, true)
+
+  cleanup(dir)
+  package.loaded["pydeps.providers.uv"] = original_uv
+end
+
 return T
