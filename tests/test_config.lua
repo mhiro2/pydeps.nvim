@@ -50,4 +50,60 @@ T["setup accepts osv options"] = function()
   end)
 end
 
+T["setup rejects negative debounce"] = function()
+  local config = require("pydeps.config")
+  local ok, err = pcall(config.setup, {
+    refresh_debounce_ms = -1,
+  })
+
+  MiniTest.expect.equality(ok, false)
+  MiniTest.expect.equality(type(err), "string")
+  MiniTest.expect.equality(err:match("refresh_debounce_ms") ~= nil, true)
+end
+
+T["setup rejects non-positive cache ttl"] = function()
+  local config = require("pydeps.config")
+
+  local ok_pypi, err_pypi = pcall(config.setup, {
+    pypi_cache_ttl = 0,
+  })
+  MiniTest.expect.equality(ok_pypi, false)
+  MiniTest.expect.equality(type(err_pypi), "string")
+  MiniTest.expect.equality(err_pypi:match("pypi_cache_ttl") ~= nil, true)
+
+  local ok_osv, err_osv = pcall(config.setup, {
+    osv_cache_ttl = 0,
+  })
+  MiniTest.expect.equality(ok_osv, false)
+  MiniTest.expect.equality(type(err_osv), "string")
+  MiniTest.expect.equality(err_osv:match("osv_cache_ttl") ~= nil, true)
+end
+
+T["setup rejects invalid completion max_results range"] = function()
+  local config = require("pydeps.config")
+  local ok, err = pcall(config.setup, {
+    completion = {
+      max_results = 0,
+    },
+  })
+
+  MiniTest.expect.equality(ok, false)
+  MiniTest.expect.equality(type(err), "string")
+  MiniTest.expect.equality(err:match("max_results") ~= nil, true)
+end
+
+T["setup accepts boundary values for numeric ranges"] = function()
+  local config = require("pydeps.config")
+  MiniTest.expect.no_error(function()
+    config.setup({
+      refresh_debounce_ms = 0,
+      pypi_cache_ttl = 1,
+      osv_cache_ttl = 1,
+      completion = {
+        max_results = 1,
+      },
+    })
+  end)
+end
+
 return T

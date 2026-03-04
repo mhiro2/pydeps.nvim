@@ -98,10 +98,12 @@ end
 ---@return nil
 function M.show(opts)
   if not opts or not opts.items or #opts.items == 0 then
-    error("select_menu: no items provided")
+    vim.notify("pydeps: select menu requires at least one item", vim.log.levels.WARN)
+    return
   end
   if #opts.items > 9 then
-    error("select_menu: max 9 items supported")
+    vim.notify("pydeps: select menu supports up to 9 items", vim.log.levels.WARN)
+    return
   end
 
   local lines = format_menu_lines(opts.prompt, opts.items)

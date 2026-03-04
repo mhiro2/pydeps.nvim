@@ -8,6 +8,7 @@
 ---@field groups string[]
 ---@field no_groups string[]
 ---@field frozen boolean
+---@field unknown_options string[]
 
 ---@class PyDepsTreeParseResult
 ---@field args PyDepsTreeArgs
@@ -30,6 +31,7 @@ function M.parse(input, bang)
     groups = {},
     no_groups = {},
     frozen = true,
+    unknown_options = {},
   }
 
   if not input or input == "" then
@@ -105,6 +107,8 @@ function M.parse(input, bang)
       end
     elseif part == "--resolve" then
       result.frozen = false
+    else
+      table.insert(result.unknown_options, part)
     end
 
     i = i + 1

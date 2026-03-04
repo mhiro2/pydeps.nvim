@@ -192,6 +192,34 @@ T["evaluate markers - complex expressions"] = function()
   MiniTest.expect.equality(markers.evaluate("python_version >= '3.8' and python_version < '4.0'", env), true)
 end
 
+T["evaluate markers - operator coverage"] = function()
+  local markers = require("pydeps.core.markers")
+  local env = {
+    python_version = "3.11",
+    python_full_version = "3.11.2",
+    sys_platform = "linux",
+  }
+
+  MiniTest.expect.equality(markers.evaluate("python_version != '3.10'", env), true)
+  MiniTest.expect.equality(markers.evaluate("python_full_version >= '3.11.2'", env), true)
+  MiniTest.expect.equality(markers.evaluate("python_version > '3.8'", env), true)
+  MiniTest.expect.equality(markers.evaluate("python_version < '3.8'", env), false)
+  MiniTest.expect.equality(markers.evaluate("sys_platform <= 'linux'", env), true)
+  MiniTest.expect.equality(markers.evaluate("sys_platform >= 'linux'", env), true)
+  MiniTest.expect.equality(markers.evaluate("sys_platform in ' win32 , linux '", env), true)
+  MiniTest.expect.equality(markers.evaluate("sys_platform not in ' linux , darwin '", env), false)
+end
+
+T["evaluate markers - escaped strings are treated as plain text"] = function()
+  local markers = require("pydeps.core.markers")
+  local env = {
+    sys_platform = "linux",
+  }
+
+  MiniTest.expect.equality(markers.evaluate([[sys_platform == 'lin\\ux']], env), false)
+  MiniTest.expect.equality(markers.evaluate([[sys_platform == "lin\\ux"]], env), false)
+end
+
 T["evaluate markers with extra and group combinations"] = function()
   local markers = require("pydeps.core.markers")
 

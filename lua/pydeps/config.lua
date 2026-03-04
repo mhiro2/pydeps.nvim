@@ -179,6 +179,16 @@ local function validate_field(name, value, validator, optional)
   })
 end
 
+---@param name string
+---@param value number|nil
+---@param min number
+---@return nil
+local function validate_min(name, value, min)
+  if value ~= nil and value < min then
+    error(string.format("pydeps: %s must be >= %s", name, min))
+  end
+end
+
 ---@param opts table
 local function validate_top_level(opts)
   validate_field("show_virtual_text", opts.show_virtual_text, "boolean", true)
@@ -190,6 +200,7 @@ local function validate_top_level(opts)
   validate_field("ui", opts.ui, "table", true)
   validate_field("auto_refresh", opts.auto_refresh, "boolean", true)
   validate_field("refresh_debounce_ms", opts.refresh_debounce_ms, "number", true)
+  validate_min("refresh_debounce_ms", opts.refresh_debounce_ms, 0)
   validate_field("info_window_border", opts.info_window_border, "string", true)
   validate_field("select_menu_border", opts.select_menu_border, "string", true)
   validate_field("select_menu_relative", opts.select_menu_relative, "string", true)
@@ -198,8 +209,10 @@ local function validate_top_level(opts)
   validate_field("enable_diagnostics", opts.enable_diagnostics, "boolean", true)
   validate_field("pypi_url", opts.pypi_url, "string", true)
   validate_field("pypi_cache_ttl", opts.pypi_cache_ttl, "number", true)
+  validate_min("pypi_cache_ttl", opts.pypi_cache_ttl, 1)
   validate_field("osv_url", opts.osv_url, "string", true)
   validate_field("osv_cache_ttl", opts.osv_cache_ttl, "number", true)
+  validate_min("osv_cache_ttl", opts.osv_cache_ttl, 1)
   validate_field("enable_completion", opts.enable_completion, "boolean", true)
   validate_field("diagnostic_severity", opts.diagnostic_severity, "table", true)
   validate_field("completion", opts.completion, "table", true)
@@ -217,6 +230,7 @@ local function validate_completion(completion)
   validate_field("pypi_search", completion.pypi_search, "boolean", true)
   validate_field("pypi_search_min", completion.pypi_search_min, "number", true)
   validate_field("max_results", completion.max_results, "number", true)
+  validate_min("max_results", completion.max_results, 1)
 end
 
 ---@param icons table

@@ -1,8 +1,8 @@
 local config = require("pydeps.config")
 local env = require("pydeps.core.env")
-local markers = require("pydeps.core.markers")
 local project = require("pydeps.core.project")
 local ui_shared = require("pydeps.ui.shared")
+local status = require("pydeps.ui.status")
 
 local ok_pypi, pypi = pcall(require, "pydeps.providers.pypi")
 local ok_ts, ts_toml = pcall(require, "pydeps.treesitter.toml")
@@ -80,19 +80,6 @@ local function display_width_to(text, byte_index)
   return vim.fn.strdisplaywidth(substring)
 end
 
----@param spec? string
----@return boolean, string?
-local function is_pinned_spec(spec)
-  if not spec then
-    return false, nil
-  end
-  local version = spec:match("%s*===*%s*([%d%.]+)")
-  if version then
-    return true, version
-  end
-  return false, nil
-end
-
 ---@param meta? PyDepsPyPIMeta
 ---@return string?
 local function latest_from_meta(meta)
@@ -107,22 +94,6 @@ local function latest_from_meta(meta)
     return versions[1]
   end
   return nil
-end
-
----@param resolved? string
----@param latest? string
----@return boolean
-local function is_major_bump(resolved, latest)
-  local function major(v)
-    if not v then
-      return nil
-    end
-    local m = tostring(v):match("^(%d+)")
-    return m and tonumber(m) or nil
-  end
-  local r = major(resolved)
-  local l = major(latest)
-  return (r and l and l > r) or false
 end
 
 ---@param class string
@@ -162,52 +133,19 @@ end
 ---@param dep table
 ---@return string?
 local function classify(dep)
-  -- Check inactive (marker evaluation failed)
-  if dep.active == false then
-    return "inactive"
-  end
-
-  -- Check yanked version
-  if dep.yanked then
-    return "yanked"
-  end
-
-  -- Check pin not found in PyPI releases
-  local is_pinned, pinned_version = is_pinned_spec(dep.spec)
-  if is_pinned and pinned_version and dep.meta and not ui_shared.is_version_in_releases(dep.meta, pinned_version) then
-    return "pin_not_found"
-  end
-
-  -- Check missing lockfile or unresolved
-  if dep.missing_lockfile or dep.unresolved then
-    return "unknown"
-  end
-
-  -- Check lock mismatch (pinned version differs from resolved)
-  if dep.resolved and pinned_version and pinned_version ~= dep.resolved then
-    dep.lock_mismatch_version = pinned_version
-    return "lock_mismatch"
-  end
-
-  -- Check pending states
-  if dep.pending == "searching" then
-    return "searching"
-  end
-  if dep.pending == "loading" then
-    return "loading"
-  end
-
-  -- Check version updates
-  if dep.latest and dep.resolved and dep.latest ~= dep.resolved then
-    return is_major_bump(dep.resolved, dep.latest) and "major" or "update"
-  end
-
-  -- All good
-  if dep.resolved then
-    return "ok"
-  end
-
-  return nil
+  local result = status.classify({
+    active = dep.active,
+    yanked = dep.yanked,
+    spec = dep.spec,
+    meta = dep.meta,
+    missing_lockfile = dep.missing_lockfile,
+    unresolved = dep.unresolved,
+    pending = dep.pending,
+    latest = dep.latest,
+    resolved = dep.resolved,
+  })
+  dep.lock_mismatch_version = result.pinned_version
+  return result.class
 end
 
 ---@param class string
@@ -487,13 +425,8 @@ end
 ---@param lockfile_missing boolean
 ---@return table
 local function create_dependency_view(bufnr, dep, resolved, current_env, line_cache, lockfile_missing, lockfile_loading)
-  -- Evaluate marker if present
   local marker = ui_shared.extract_marker(dep.spec)
-  local marker_active = true
-  if marker then
-    local result = markers.evaluate(marker, ui_shared.with_extra_env(current_env, dep))
-    marker_active = result ~= false
-  end
+  local marker_active = status.is_active(dep, current_env)
 
   -- Get resolved version
   local resolved_version = get_resolved_version(dep, resolved)
