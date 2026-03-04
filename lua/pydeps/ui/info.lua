@@ -4,6 +4,7 @@ local env = require("pydeps.core.env")
 local project = require("pydeps.core.project")
 local pypi = require("pydeps.providers.pypi")
 local ui_shared = require("pydeps.ui.shared")
+local status_logic = require("pydeps.ui.status")
 local util = require("pydeps.util")
 
 local M = {}
@@ -95,18 +96,21 @@ local info_labels = {
   status = true,
 }
 
----@param kind string
+---@param info_status PyDepsStatusResult
 ---@return string
-local function format_status_text(kind)
-  if kind == "ok" then
+local function format_status_text(info_status)
+  if info_status.text and info_status.text ~= "" then
+    return info_status.text
+  end
+  if info_status.kind == "ok" then
     return "active"
-  elseif kind == "update" then
+  elseif info_status.kind == "update" then
     return "update available"
-  elseif kind == "warn" then
+  elseif info_status.kind == "warn" then
     return "lock mismatch"
-  elseif kind == "error" then
+  elseif info_status.kind == "error" then
     return "yanked"
-  elseif kind == "inactive" then
+  elseif info_status.kind == "inactive" then
     return "inactive"
   else
     return "unknown"
@@ -191,7 +195,7 @@ local function apply_info_highlights(buf, dep, lines, status)
       -- Status value highlighting (color by status type)
       if label == "status" then
         local status_hl = status_highlight_group(status.kind)
-        local status_text = format_status_text(status.kind)
+        local status_text = format_status_text(status)
         local value_start = line:find(status_text, 1, true)
         if value_start then
           vim.api.nvim_buf_add_highlight(
@@ -243,6 +247,7 @@ end
 
 ---@class PyDepsStatusResult
 ---@field kind "ok"|"update"|"warn"|"error"|"inactive"|"unknown"
+---@field text string
 ---@field icon string
 ---@field lock_status? string
 ---@field show_latest_warning boolean
@@ -359,82 +364,86 @@ end
 ---@param resolved? string
 ---@param meta? PyDepsPyPIMeta
 ---@param root? string
+---@param lockfile_missing? boolean
 ---@return PyDepsStatusResult
-local function determine_status(dep, resolved, meta, root)
-  local markers = require("pydeps.core.markers")
-  local marker_env = vim.tbl_deep_extend("force", {}, env.get(root))
+local function determine_status(dep, resolved, meta, root, lockfile_missing)
+  local latest_version = meta and meta.info and meta.info.version or nil
+  local is_active = status_logic.is_active(dep, env.get(root))
+  local is_yanked = resolved and meta and pypi.is_yanked(meta, resolved) or false
+  local classified = status_logic.classify({
+    active = is_active,
+    yanked = is_yanked,
+    spec = dep.spec,
+    meta = meta,
+    missing_lockfile = lockfile_missing or false,
+    unresolved = resolved == nil and meta ~= nil and not lockfile_missing,
+    latest = latest_version,
+    resolved = resolved,
+  })
 
-  -- Add extra/group to env for marker evaluation
-  if dep.group then
-    if dep.group:match("^optional:") then
-      marker_env.extra = dep.group:sub(#"optional:" + 1)
-    elseif dep.group:match("^group:") then
-      marker_env.group = dep.group:sub(#"group:" + 1)
-    end
+  if classified.class == "inactive" then
+    return {
+      kind = "inactive",
+      text = "inactive",
+      icon = icon_for("inactive"),
+      lock_status = nil,
+      show_latest_warning = false,
+    }
   end
 
-  -- Check inactive (markers)
-  local marker = extract_marker(dep.spec)
-  if marker and marker_env and marker_env.python_version then
-    local is_active = markers.evaluate(marker, marker_env)
-    if not is_active then
-      return {
-        kind = "inactive",
-        icon = icon_for("inactive"),
-        lock_status = nil,
-        show_latest_warning = false,
-      }
-    end
-  end
-
-  -- Check yanked
-  if resolved and meta and pypi.is_yanked(meta, resolved) then
+  if classified.class == "yanked" then
     return {
       kind = "error",
+      text = "yanked",
       icon = icon_for("yanked"),
       lock_status = "(yanked)",
       show_latest_warning = false,
     }
   end
 
-  -- Check lock mismatch (pinned spec != resolved)
-  local pinned_version = dep.spec and dep.spec:match("===%s*([^,%s]+)") or dep.spec:match("==%s*([^,%s]+)")
-  local is_pinned = pinned_version ~= nil
-  if is_pinned and resolved then
-    if pinned_version and pinned_version ~= resolved then
-      return {
-        kind = "warn",
-        icon = icon_for("lock_mismatch"),
-        lock_status = "(lock mismatch)",
-        show_latest_warning = false,
-      }
-    end
+  if classified.class == "pin_not_found" then
+    return {
+      kind = "error",
+      text = "pin not found",
+      icon = icon_for("pin_not_found"),
+      lock_status = "(not on public PyPI)",
+      show_latest_warning = false,
+    }
   end
 
-  -- Check update available
-  local latest_version = meta and meta.info and meta.info.version
-  if resolved and latest_version and resolved ~= latest_version then
+  if classified.class == "lock_mismatch" then
+    return {
+      kind = "warn",
+      text = "lock mismatch",
+      icon = icon_for("lock_mismatch"),
+      lock_status = "(lock mismatch)",
+      show_latest_warning = false,
+    }
+  end
+
+  if classified.class == "update" or classified.class == "major" then
     return {
       kind = "update",
+      text = "update available",
       icon = icon_for("update"),
       lock_status = nil,
       show_latest_warning = true,
     }
   end
 
-  -- Package not found on PyPI (meta is nil)
-  if not meta then
+  if classified.class == "searching" or classified.class == "loading" or classified.class == "unknown" then
     return {
       kind = "unknown",
+      text = "unknown",
       icon = icon_for("unknown"),
       lock_status = nil,
       show_latest_warning = false,
     }
   end
 
-  -- OK
   return {
     kind = "ok",
+    text = "active",
     icon = icon_for("ok"),
     lock_status = resolved and "(up-to-date)" or nil,
     show_latest_warning = false,
@@ -457,7 +466,7 @@ local function build_lines(dep, resolved, opts, meta)
   end
 
   -- Determine status
-  local status = determine_status(dep, resolved, meta, root)
+  local status_result = determine_status(dep, resolved, meta, root, opts and opts.lockfile_missing)
 
   -- Icons
   local package_icon = icon_for("package")
@@ -486,7 +495,7 @@ local function build_lines(dep, resolved, opts, meta)
 
   -- lock line
   if resolved then
-    local lock_suffix = status.lock_status or ""
+    local lock_suffix = status_result.lock_status or ""
     table.insert(lines, format_line(lock_icon, "lock", resolved, lock_suffix))
   elseif opts and opts.lockfile_missing then
     table.insert(lines, format_line(lock_icon, "lock", "(missing)"))
@@ -505,7 +514,7 @@ local function build_lines(dep, resolved, opts, meta)
   end
 
   local latest_suffix = nil
-  if status.show_latest_warning then
+  if status_result.show_latest_warning then
     latest_suffix = "(update available)"
   end
   table.insert(lines, format_line(latest_icon, "latest", latest_version, latest_suffix))
@@ -526,9 +535,9 @@ local function build_lines(dep, resolved, opts, meta)
   end
 
   -- status line (always shown)
-  local status_text = format_status_text(status.kind)
+  local status_text = format_status_text(status_result)
   local status_suffix = ""
-  if status.kind == "inactive" then
+  if status_result.kind == "inactive" then
     local runtime_env = env.get(root)
     local python_ver = runtime_env.python_full_version or runtime_env.python_version or "unknown"
     status_suffix = "(python " .. python_ver .. ")"
@@ -683,8 +692,8 @@ local function render_hover(dep, resolved, opts, source_buf, window_opts)
   setup_hover_keybindings(dep, source_buf)
   setup_hover_buffer_keymaps()
 
-  local status = determine_status(dep, resolved, nil, root)
-  apply_info_highlights(resources.buf_id, dep, lines, status)
+  local status_result = determine_status(dep, resolved, nil, root, opts.lockfile_missing)
+  apply_info_highlights(resources.buf_id, dep, lines, status_result)
 
   pypi.get(dep.name, function(meta)
     if generation ~= info_generation then
@@ -699,8 +708,8 @@ local function render_hover(dep, resolved, opts, source_buf, window_opts)
     vim.api.nvim_buf_set_lines(buf_id, 0, -1, false, updated)
     vim.bo[buf_id].modifiable = false
 
-    local updated_status = determine_status(dep, resolved, meta, root)
-    apply_info_highlights(buf_id, dep, updated, updated_status)
+    local updated_status_result = determine_status(dep, resolved, meta, root, opts.lockfile_missing)
+    apply_info_highlights(buf_id, dep, updated, updated_status_result)
 
     local new_width, new_height = hover_window_size(updated)
     if resources.win_id == win_id and vim.api.nvim_win_is_valid(win_id) then
