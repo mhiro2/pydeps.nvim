@@ -199,6 +199,75 @@ T["lock mismatch shows pinned version in badge"] = function()
   MiniTest.expect.equality(string.find(text, "1.0.0") ~= nil, true)
 end
 
+T["unresolved pinned dependency is not classified as lock mismatch"] = function()
+  stub_env()
+  package.loaded["pydeps.providers.pypi"] = {
+    get_cached = function(name)
+      if name == "pendingpkg" then
+        return {
+          releases = {
+            ["1.0.0"] = {},
+          },
+        }
+      end
+      return nil
+    end,
+    get = function(_, cb)
+      if cb then
+        cb({
+          releases = {
+            ["1.0.0"] = {},
+          },
+        })
+      end
+    end,
+    is_yanked = function()
+      return false
+    end,
+  }
+  package.loaded["pydeps.ui.virtual_text"] = nil
+  local config = require("pydeps.config")
+  config.setup({
+    show_missing_virtual_text = true,
+    ui = {
+      section_padding = 2,
+      icons = { enabled = false },
+      show = {
+        resolved = true,
+        latest = false,
+      },
+    },
+  })
+  local virtual_text = require("pydeps.ui.virtual_text")
+  local pyproject = require("pydeps.sources.pyproject")
+
+  helpers.setup_buffer({
+    "[project]",
+    "dependencies = [",
+    '  "pendingpkg==1.0.0",',
+    "]",
+  })
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.bo[bufnr].filetype = "toml"
+  local deps = pyproject.parse(nil, nil, bufnr)
+
+  virtual_text.render(bufnr, deps, {}, { lockfile_missing = false })
+
+  local marks = vim.api.nvim_buf_get_extmarks(bufnr, virtual_text.ns, 0, -1, { details = true })
+  MiniTest.expect.equality(#marks, 1)
+
+  local details = marks[1][4] or {}
+  local virt_text = details.virt_text or {}
+  local text = ""
+  for _, chunk in ipairs(virt_text) do
+    text = text .. chunk[1]
+  end
+
+  MiniTest.expect.equality(string.find(text, "unresolved") ~= nil, true)
+  MiniTest.expect.equality(string.find(text, "pinned:") == nil, true)
+end
+
 T["pin not found shows message when version not on PyPI"] = function()
   stub_env()
   package.loaded["pydeps.providers.pypi"] = {

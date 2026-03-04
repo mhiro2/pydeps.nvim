@@ -226,12 +226,12 @@ function M.run_command(cmd, opts)
     stderr_buffered = true,
     on_stdout = function(_, data)
       if data then
-        stdout = data
+        vim.list_extend(stdout, data)
       end
     end,
     on_stderr = function(_, data)
       if data then
-        stderr = data
+        vim.list_extend(stderr, data)
       end
     end,
     on_exit = function(_, code)

@@ -178,15 +178,15 @@ local function classify(dep)
     return "pin_not_found"
   end
 
-  -- Check lock mismatch (pinned version differs from resolved)
-  if pinned_version and pinned_version ~= dep.resolved then
-    dep.lock_mismatch_version = pinned_version
-    return "lock_mismatch"
-  end
-
   -- Check missing lockfile or unresolved
   if dep.missing_lockfile or dep.unresolved then
     return "unknown"
+  end
+
+  -- Check lock mismatch (pinned version differs from resolved)
+  if dep.resolved and pinned_version and pinned_version ~= dep.resolved then
+    dep.lock_mismatch_version = pinned_version
+    return "lock_mismatch"
   end
 
   -- Check pending states
