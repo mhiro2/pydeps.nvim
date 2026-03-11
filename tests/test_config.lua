@@ -39,6 +39,49 @@ T["setup validates nested option types"] = function()
   MiniTest.expect.equality(err:match("pypi_search_min") ~= nil, true)
 end
 
+T["setup validates diagnostic severity option types"] = function()
+  local config = require("pydeps.config")
+  local ok, err = pcall(config.setup, {
+    diagnostic_severity = {
+      lock = "warn",
+    },
+  })
+
+  MiniTest.expect.equality(ok, false)
+  MiniTest.expect.equality(type(err), "string")
+  MiniTest.expect.equality(err:match("lock") ~= nil, true)
+end
+
+T["setup validates ui icon option types"] = function()
+  local config = require("pydeps.config")
+  local ok, err = pcall(config.setup, {
+    ui = {
+      icons = {
+        update = false,
+      },
+    },
+  })
+
+  MiniTest.expect.equality(ok, false)
+  MiniTest.expect.equality(type(err), "string")
+  MiniTest.expect.equality(err:match("update") ~= nil, true)
+end
+
+T["setup validates ui status text option types"] = function()
+  local config = require("pydeps.config")
+  local ok, err = pcall(config.setup, {
+    ui = {
+      status_text = {
+        loading = 1,
+      },
+    },
+  })
+
+  MiniTest.expect.equality(ok, false)
+  MiniTest.expect.equality(type(err), "string")
+  MiniTest.expect.equality(err:match("loading") ~= nil, true)
+end
+
 T["setup accepts osv options"] = function()
   local config = require("pydeps.config")
   MiniTest.expect.no_error(function()

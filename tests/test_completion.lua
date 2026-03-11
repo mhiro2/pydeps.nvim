@@ -24,7 +24,15 @@ local function cleanup(dir)
   end
 end
 
+---@return nil
+local function reset_completion_modules()
+  package.loaded["pydeps.completion.core"] = nil
+  package.loaded["pydeps.completion.items"] = nil
+  package.loaded["pydeps.completion.scan"] = nil
+end
+
 local function run_complete(bufnr, line_num, col)
+  reset_completion_modules()
   local completion = require("pydeps.completion.core")
   local result = nil
   completion.complete(bufnr, { line_num, col }, function(res)
@@ -65,7 +73,7 @@ T["completion contexts"] = function()
       return { "2.1.0", "2.0.0" }
     end,
   }
-  package.loaded["pydeps.completion"] = nil
+  reset_completion_modules()
 
   local dir = create_project({
     "[project]",
@@ -185,6 +193,7 @@ T["completion contexts"] = function()
 end
 
 T["completion - boundary conditions"] = function()
+  reset_completion_modules()
   local completion = require("pydeps.completion.core")
 
   -- invalid buffer number should return empty result
@@ -207,6 +216,7 @@ T["completion - boundary conditions"] = function()
 end
 
 T["completion scan_strings - escape sequences"] = function()
+  reset_completion_modules()
   -- Create a pyproject.toml buffer for testing
   local dir = vim.fn.tempname()
   vim.fn.mkdir(dir, "p")
@@ -279,6 +289,7 @@ T["completion scan_strings - escape sequences"] = function()
 end
 
 T["completion detect_context - edge cases"] = function()
+  reset_completion_modules()
   local completion = require("pydeps.completion.core")
 
   -- Create a pyproject.toml buffer
