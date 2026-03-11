@@ -1,8 +1,8 @@
 local config = require("pydeps.config")
 local env = require("pydeps.core.env")
 local project = require("pydeps.core.project")
+local dependency_view = require("pydeps.ui.dependency_view")
 local ui_shared = require("pydeps.ui.shared")
-local status = require("pydeps.ui.status")
 
 local ok_pypi, pypi = pcall(require, "pydeps.providers.pypi")
 local ok_ts, ts_toml = pcall(require, "pydeps.treesitter.toml")
@@ -80,22 +80,6 @@ local function display_width_to(text, byte_index)
   return vim.fn.strdisplaywidth(substring)
 end
 
----@param meta? PyDepsPyPIMeta
----@return string?
-local function latest_from_meta(meta)
-  if not meta then
-    return nil
-  end
-  if meta.info and meta.info.version then
-    return meta.info.version
-  end
-  if ok_pypi and pypi.sorted_versions then
-    local versions = pypi.sorted_versions(meta)
-    return versions[1]
-  end
-  return nil
-end
-
 ---@param class string
 ---@return string
 local function hl_for(class)
@@ -130,24 +114,6 @@ local function kind_for(class)
   return kind_map[class] or "unknown"
 end
 
----@param dep table
----@return string?
-local function classify(dep)
-  local result = status.classify({
-    active = dep.active,
-    yanked = dep.yanked,
-    spec = dep.spec,
-    meta = dep.meta,
-    missing_lockfile = dep.missing_lockfile,
-    unresolved = dep.unresolved,
-    pending = dep.pending,
-    latest = dep.latest,
-    resolved = dep.resolved,
-  })
-  dep.lock_mismatch_version = result.pinned_version
-  return result.class
-end
-
 ---@param class string
 ---@return string
 local function get_status_text(class)
@@ -159,7 +125,7 @@ end
 ---@param dep table
 ---@return table[]?, string?
 local function build_badge(dep)
-  local class = classify(dep)
+  local class = dep.class
   if not class then
     return nil, nil
   end
@@ -223,8 +189,8 @@ local function build_badge(dep)
   end
 
   -- Show lock mismatch version
-  if class == "lock_mismatch" and dep.lock_mismatch_version then
-    table.insert(chunks, { "  (pinned: " .. dep.lock_mismatch_version .. ")", hl })
+  if class == "lock_mismatch" and dep.pinned_version then
+    table.insert(chunks, { "  (pinned: " .. dep.pinned_version .. ")", hl })
   end
 
   return chunks, class
@@ -362,119 +328,62 @@ local function get_buffer_line(bufnr, line, line_cache)
   return line_cache[line]
 end
 
----@param dep PyDepsDependency
----@param resolved PyDepsResolved
----@return string?
-local function get_resolved_version(dep, resolved)
-  return resolved and resolved[dep.name] or nil
-end
-
----@param _dep PyDepsDependency
----@param resolved_version string?
----@param lockfile_missing boolean
----@param show_missing_lockfile boolean
----@param show_missing boolean
----@param meta PyDepsPyPIMeta?
----@return table
-local function build_view_metadata(
-  _dep,
-  resolved_version,
-  lockfile_missing,
-  lockfile_loading,
-  show_missing_lockfile,
-  show_missing,
-  meta
-)
-  local view = {
-    missing_lockfile = false,
-    unresolved = false,
-    meta = nil,
-    latest = nil,
-    yanked = false,
-  }
-
-  if not resolved_version and not lockfile_loading then
-    if lockfile_missing and show_missing_lockfile then
-      view.missing_lockfile = true
-      view.missing_lockfile_text = config.options.missing_lockfile_virtual_text or "missing uv.lock"
-    elseif not lockfile_missing and show_missing then
-      -- Only show unresolved if package exists on PyPI (meta is available)
-      -- This avoids noise for private packages, git/path dependencies, etc.
-      if meta then
-        view.unresolved = true
-      end
-    end
-  end
-
-  if meta then
-    view.meta = meta
-    view.latest = latest_from_meta(meta)
-    if resolved_version then
-      view.yanked = pypi.is_yanked(meta, resolved_version)
-    end
-  end
-
-  return view
-end
-
 ---@param bufnr integer
 ---@param dep PyDepsDependency
+---@param root? string
 ---@param resolved PyDepsResolved
 ---@param current_env PyDepsEnv
 ---@param line_cache table<integer, string?>
 ---@param lockfile_missing boolean
 ---@return table
-local function create_dependency_view(bufnr, dep, resolved, current_env, line_cache, lockfile_missing, lockfile_loading)
-  local marker = ui_shared.extract_marker(dep.spec)
-  local marker_active = status.is_active(dep, current_env)
-
-  -- Get resolved version
-  local resolved_version = get_resolved_version(dep, resolved)
-
+local function create_dependency_view(
+  bufnr,
+  dep,
+  root,
+  resolved,
+  current_env,
+  line_cache,
+  lockfile_missing,
+  lockfile_loading
+)
   -- Calculate display positions
   local line = dep.line
   local line_text = line and get_buffer_line(bufnr, line, line_cache) or nil
   local col_end_display = line_text and dep.col_end and display_width_to(line_text, dep.col_end) or nil
   local comment_end_display = line_text and dep.comment_col and vim.fn.strdisplaywidth(line_text) or nil
 
-  -- Build base view
-  local view = {
-    name = dep.name,
-    spec = dep.spec,
-    lnum = dep.line - 1,
-    col = math.max((dep.col_start or 1) - 1, 0),
-    line = dep.line,
-    marker = marker,
-    active = marker_active,
-    resolved = resolved_version,
-    col_end = dep.col_end,
-    col_end_display = col_end_display,
-    comment_col = dep.comment_col,
-    comment_end_display = comment_end_display,
-    group = dep.group,
+  local view = dependency_view.build(dep, {
+    root = root,
+    current_env = current_env,
+    resolved = resolved,
     pending = pending[dep.name],
-  }
+    lockfile_missing = lockfile_missing,
+    lockfile_loading = lockfile_loading,
+  })
 
-  -- Add PyPI metadata
-  local meta = nil
-  if ok_pypi then
-    meta = pypi.get_cached(dep.name)
-  end
+  view.lnum = dep.line - 1
+  view.col = math.max((dep.col_start or 1) - 1, 0)
+  view.line = dep.line
+  view.col_end = dep.col_end
+  view.col_end_display = col_end_display
+  view.comment_col = dep.comment_col
+  view.comment_end_display = comment_end_display
+  view.group = dep.group
 
-  local show_missing = config.options.show_missing_virtual_text
-  local show_missing_lockfile = config.options.show_missing_lockfile_virtual_text
-  local metadata = build_view_metadata(
-    dep,
-    resolved_version,
-    lockfile_missing,
-    lockfile_loading,
-    show_missing_lockfile,
-    show_missing,
-    meta
-  )
+  if view.class == "unknown" then
+    local show_missing_lockfile = view.missing_lockfile and config.options.show_missing_lockfile_virtual_text == true
+    local show_unresolved = view.unresolved and config.options.show_missing_virtual_text == true
 
-  for k, v in pairs(metadata) do
-    view[k] = v
+    if not show_missing_lockfile then
+      view.missing_lockfile = false
+      view.missing_lockfile_text = nil
+    end
+    if not show_unresolved then
+      view.unresolved = false
+    end
+    if not show_missing_lockfile and not show_unresolved then
+      view.class = nil
+    end
   end
 
   return view
@@ -528,11 +437,12 @@ end
 
 ---@param bufnr integer
 ---@param deps PyDepsDependency[]
+---@param root? string
 ---@param resolved PyDepsResolved
 ---@param current_env PyDepsEnv
 ---@param lockfile_missing boolean
 ---@return table[]
-local function build_dependency_views(bufnr, deps, resolved, current_env, lockfile_missing, lockfile_loading)
+local function build_dependency_views(bufnr, deps, root, resolved, current_env, lockfile_missing, lockfile_loading)
   local views = {}
   local line_cache = {}
 
@@ -543,7 +453,7 @@ local function build_dependency_views(bufnr, deps, resolved, current_env, lockfi
     end
 
     local view =
-      create_dependency_view(bufnr, dep, resolved, current_env, line_cache, lockfile_missing, lockfile_loading)
+      create_dependency_view(bufnr, dep, root, resolved, current_env, line_cache, lockfile_missing, lockfile_loading)
     table.insert(views, view)
   end
 
@@ -581,7 +491,7 @@ function M.render(bufnr, deps, resolved, opts)
   local lockfile_loading = opts and opts.lockfile_loading or false
 
   -- Build all dependency views
-  local views = build_dependency_views(bufnr, deps, resolved, current_env, lockfile_missing, lockfile_loading)
+  local views = build_dependency_views(bufnr, deps, root, resolved, current_env, lockfile_missing, lockfile_loading)
 
   -- Calculate badge positions
   local ranges = get_treesitter_ranges(bufnr)

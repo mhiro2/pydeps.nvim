@@ -1,3 +1,4 @@
+local buffer_context = require("pydeps.core.buffer_context")
 local cache = require("pydeps.core.cache")
 local config = require("pydeps.config")
 local project = require("pydeps.core.project")
@@ -23,24 +24,6 @@ local refresh_timers = {}
 ---@type table<integer, integer>
 local refresh_ticks = {}
 
----@return integer
-local function current_buf()
-  return vim.api.nvim_get_current_buf()
-end
-
----@param bufnr integer
----@return boolean
-local function is_pyproject_buf(bufnr)
-  local name = vim.api.nvim_buf_get_name(bufnr)
-  return name:match("pyproject%.toml$") ~= nil
-end
-
----@param bufnr integer
----@return PyDepsDependency[]
-local function parse_buffer_deps(bufnr)
-  return cache.get_pyproject(bufnr)
-end
-
 ---@param name string
 local function refresh_buffers_with_dep(name)
   if not name or name == "" then
@@ -49,8 +32,8 @@ local function refresh_buffers_with_dep(name)
   end
   local target = name:lower()
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(bufnr) and is_pyproject_buf(bufnr) then
-      for _, dep in ipairs(parse_buffer_deps(bufnr) or {}) do
+    if vim.api.nvim_buf_is_loaded(bufnr) and buffer_context.is_pyproject_buf(bufnr) then
+      for _, dep in ipairs(buffer_context.get_deps(bufnr) or {}) do
         if dep.name == target then
           M.refresh(bufnr)
           break
@@ -88,7 +71,7 @@ end
 
 ---@param bufnr integer
 local function schedule_refresh(bufnr)
-  if not is_pyproject_buf(bufnr) or not enabled then
+  if not buffer_context.is_pyproject_buf(bufnr) or not enabled then
     return
   end
 
@@ -178,13 +161,13 @@ local function ensure_autocmds()
   vim.api.nvim_create_autocmd({ "BufWipeout", "BufFilePost" }, {
     group = augroup_id,
     callback = function(args)
-      require("pydeps.core.project").clear_cache(args.buf)
+      project.clear_cache(args.buf)
     end,
   })
   vim.api.nvim_create_autocmd("BufReadPost", {
     group = augroup_id,
     callback = function(args)
-      require("pydeps.core.project").clear_cache(args.buf)
+      project.clear_cache(args.buf)
     end,
   })
   vim.api.nvim_create_autocmd("BufWritePost", {
@@ -237,7 +220,7 @@ end
 
 function M.clear_all()
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(bufnr) and is_pyproject_buf(bufnr) then
+    if vim.api.nvim_buf_is_loaded(bufnr) and buffer_context.is_pyproject_buf(bufnr) then
       M.clear(bufnr)
     end
   end
@@ -258,8 +241,8 @@ end
 
 ---@param bufnr? integer
 function M.refresh(bufnr)
-  bufnr = bufnr or current_buf()
-  if not is_pyproject_buf(bufnr) then
+  bufnr = buffer_context.current_buf(bufnr)
+  if not buffer_context.is_pyproject_buf(bufnr) then
     return
   end
   if not enabled then
@@ -267,13 +250,13 @@ function M.refresh(bufnr)
     return
   end
 
-  local root = project.find_root(bufnr)
+  local root = buffer_context.find_root(bufnr)
   if not root then
     return
   end
 
   -- Get dependency data
-  local deps = parse_buffer_deps(bufnr)
+  local deps = buffer_context.get_deps(bufnr)
   local lock_data, missing_lockfile, lockfile_loading = cache.get_lockfile(root)
   local resolved = lock_data.resolved or {}
 
