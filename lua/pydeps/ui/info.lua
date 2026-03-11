@@ -1,10 +1,9 @@
+local buffer_context = require("pydeps.core.buffer_context")
 local cache = require("pydeps.core.cache")
 local config = require("pydeps.config")
-local env = require("pydeps.core.env")
-local project = require("pydeps.core.project")
 local pypi = require("pydeps.providers.pypi")
+local dependency_view = require("pydeps.ui.dependency_view")
 local ui_shared = require("pydeps.ui.shared")
-local status_logic = require("pydeps.ui.status")
 local util = require("pydeps.util")
 
 local M = {}
@@ -273,7 +272,6 @@ local function clamp_window_size(width, height)
 end
 
 icon_for = ui_shared.icon_for
-local extract_marker = ui_shared.extract_marker
 
 -- Column alignment constants
 -- Max label width: with icon = ~9 chars (e.g., " spec")
@@ -360,103 +358,24 @@ local function get_deps_count(lock_data, dep_name)
   return #pkg.dependencies
 end
 
----@param dep PyDepsDependency
----@param resolved? string
----@param meta? PyDepsPyPIMeta
----@param root? string
----@param lockfile_missing? boolean
+---@param view PyDepsDependencyView
 ---@return PyDepsStatusResult
-local function determine_status(dep, resolved, meta, root, lockfile_missing)
-  local latest_version = meta and meta.info and meta.info.version or nil
-  local is_active = status_logic.is_active(dep, env.get(root))
-  local is_yanked = resolved and meta and pypi.is_yanked(meta, resolved) or false
-  local classified = status_logic.classify({
-    active = is_active,
-    yanked = is_yanked,
-    spec = dep.spec,
-    meta = meta,
-    missing_lockfile = lockfile_missing or false,
-    unresolved = resolved == nil and meta ~= nil and not lockfile_missing,
-    latest = latest_version,
-    resolved = resolved,
-  })
-
-  if classified.class == "inactive" then
-    return {
-      kind = "inactive",
-      text = "inactive",
-      icon = icon_for("inactive"),
-      lock_status = nil,
-      show_latest_warning = false,
-    }
-  end
-
-  if classified.class == "yanked" then
-    return {
-      kind = "error",
-      text = "yanked",
-      icon = icon_for("yanked"),
-      lock_status = "(yanked)",
-      show_latest_warning = false,
-    }
-  end
-
-  if classified.class == "pin_not_found" then
-    return {
-      kind = "error",
-      text = "pin not found",
-      icon = icon_for("pin_not_found"),
-      lock_status = "(not on public PyPI)",
-      show_latest_warning = false,
-    }
-  end
-
-  if classified.class == "lock_mismatch" then
-    return {
-      kind = "warn",
-      text = "lock mismatch",
-      icon = icon_for("lock_mismatch"),
-      lock_status = "(lock mismatch)",
-      show_latest_warning = false,
-    }
-  end
-
-  if classified.class == "update" or classified.class == "major" then
-    return {
-      kind = "update",
-      text = "update available",
-      icon = icon_for("update"),
-      lock_status = nil,
-      show_latest_warning = true,
-    }
-  end
-
-  if classified.class == "searching" or classified.class == "loading" or classified.class == "unknown" then
-    return {
-      kind = "unknown",
-      text = "unknown",
-      icon = icon_for("unknown"),
-      lock_status = nil,
-      show_latest_warning = false,
-    }
-  end
-
+local function determine_status(view)
   return {
-    kind = "ok",
-    text = "active",
-    icon = icon_for("ok"),
-    lock_status = resolved and "(up-to-date)" or nil,
-    show_latest_warning = false,
+    kind = view.status_kind,
+    text = view.status_text,
+    icon = view.status_icon,
+    lock_status = view.lock_status,
+    show_latest_warning = view.show_latest_warning,
   }
 end
 
----@param dep PyDepsDependency
----@param resolved? string
+---@param view PyDepsDependencyView
 ---@param opts? PyDepsRenderOptions
----@param meta? PyDepsPyPIMeta
 ---@return string[]
-local function build_lines(dep, resolved, opts, meta)
+local function build_lines(view, opts)
   local lines = {}
+  local dep = view.dep
   local root = opts and opts.root
 
   -- Get lock data for deps count
@@ -466,7 +385,7 @@ local function build_lines(dep, resolved, opts, meta)
   end
 
   -- Determine status
-  local status_result = determine_status(dep, resolved, meta, root, opts and opts.lockfile_missing)
+  local status_result = determine_status(view)
 
   -- Icons
   local package_icon = icon_for("package")
@@ -478,7 +397,7 @@ local function build_lines(dep, resolved, opts, meta)
   local deps_icon = icon_for("deps")
   local pypi_icon = icon_for("pypi")
 
-  local description = meta and meta.info and meta.info.summary
+  local description = view.meta and view.meta.info and view.meta.info.summary
   -- Header: package name only (no status icon)
   table.insert(lines, package_icon .. " " .. dep.name)
 
@@ -494,9 +413,9 @@ local function build_lines(dep, resolved, opts, meta)
   table.insert(lines, format_line(spec_icon, "spec", dep.spec or "(unknown)"))
 
   -- lock line
-  if resolved then
+  if view.resolved then
     local lock_suffix = status_result.lock_status or ""
-    table.insert(lines, format_line(lock_icon, "lock", resolved, lock_suffix))
+    table.insert(lines, format_line(lock_icon, "lock", view.resolved, lock_suffix))
   elseif opts and opts.lockfile_missing then
     table.insert(lines, format_line(lock_icon, "lock", "(missing)"))
   else
@@ -504,14 +423,7 @@ local function build_lines(dep, resolved, opts, meta)
   end
 
   -- latest line
-  local latest_version = nil
-  if meta and meta.info and meta.info.version then
-    latest_version = meta.info.version
-  elseif meta then
-    latest_version = "(not found)"
-  else
-    latest_version = "(loading...)"
-  end
+  local latest_version = view.latest or (view.meta and "(not found)" or "(loading...)")
 
   local latest_suffix = nil
   if status_result.show_latest_warning then
@@ -521,7 +433,7 @@ local function build_lines(dep, resolved, opts, meta)
 
   -- Environment section (extras, markers, status)
   local extras_line = format_extras(dep)
-  local marker = extract_marker(dep.spec)
+  local marker = view.marker
   local has_env = extras_line or marker
 
   if has_env then
@@ -538,7 +450,7 @@ local function build_lines(dep, resolved, opts, meta)
   local status_text = format_status_text(status_result)
   local status_suffix = ""
   if status_result.kind == "inactive" then
-    local runtime_env = env.get(root)
+    local runtime_env = view.current_env or {}
     local python_ver = runtime_env.python_full_version or runtime_env.python_version or "unknown"
     status_suffix = "(python " .. python_ver .. ")"
   end
@@ -550,7 +462,7 @@ local function build_lines(dep, resolved, opts, meta)
 
   -- pypi URL
   local pypi_url = config.options.pypi_url .. "/" .. dep.name
-  if meta and meta.info and meta.info.version then
+  if view.meta and view.meta.info and view.meta.info.version then
     table.insert(lines, format_line(pypi_icon, "pypi", pypi_url))
   else
     table.insert(lines, format_line(pypi_icon, "pypi", "not found on public PyPI"))
@@ -676,7 +588,12 @@ local function render_hover(dep, resolved, opts, source_buf, window_opts)
 
   local generation = next_generation()
   local root = opts.root
-  local lines = build_lines(dep, resolved, opts, nil)
+  local view = dependency_view.build(dep, {
+    root = root,
+    resolved_version = resolved,
+    lockfile_missing = opts.lockfile_missing,
+  })
+  local lines = build_lines(view, opts)
 
   resources.buf_id = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(resources.buf_id, 0, -1, false, lines)
@@ -692,7 +609,7 @@ local function render_hover(dep, resolved, opts, source_buf, window_opts)
   setup_hover_keybindings(dep, source_buf)
   setup_hover_buffer_keymaps()
 
-  local status_result = determine_status(dep, resolved, nil, root, opts.lockfile_missing)
+  local status_result = determine_status(view)
   apply_info_highlights(resources.buf_id, dep, lines, status_result)
 
   pypi.get(dep.name, function(meta)
@@ -703,12 +620,18 @@ local function render_hover(dep, resolved, opts, source_buf, window_opts)
       return
     end
 
-    local updated = build_lines(dep, resolved, opts, meta)
+    local updated_view = dependency_view.build(dep, {
+      root = root,
+      resolved_version = resolved,
+      lockfile_missing = opts.lockfile_missing,
+      meta = meta,
+    })
+    local updated = build_lines(updated_view, opts)
     vim.bo[buf_id].modifiable = true
     vim.api.nvim_buf_set_lines(buf_id, 0, -1, false, updated)
     vim.bo[buf_id].modifiable = false
 
-    local updated_status_result = determine_status(dep, resolved, meta, root, opts.lockfile_missing)
+    local updated_status_result = determine_status(updated_view)
     apply_info_highlights(buf_id, dep, updated, updated_status_result)
 
     local new_width, new_height = hover_window_size(updated)
@@ -761,20 +684,18 @@ end
 
 ---@return PyDepsDependency?, string?, PyDepsRenderOptions?, integer?
 local function cursor_hover_context()
-  local bufnr = vim.api.nvim_get_current_buf()
-
-  local name = vim.api.nvim_buf_get_name(bufnr)
-  if not name:match("pyproject%.toml$") then
+  local bufnr = buffer_context.current_buf()
+  if not buffer_context.is_pyproject_buf(bufnr) then
     return nil, nil, nil, bufnr
   end
 
-  local deps = cache.get_pyproject(bufnr)
-  local dep = util.dep_under_cursor(deps)
+  local deps = buffer_context.get_deps(bufnr)
+  local dep = buffer_context.dep_under_cursor(deps)
   if not dep then
     return nil, nil, nil, bufnr
   end
 
-  local root = project.find_root(bufnr)
+  local root = buffer_context.find_root(bufnr)
   local resolved = {}
   local missing_lockfile = false
   if root then
