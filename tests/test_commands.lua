@@ -268,6 +268,7 @@ end
 
 T["tree warns on unknown options and still invokes uv tree"] = function()
   local original_uv = package.loaded["pydeps.providers.uv"]
+  local original_output = package.loaded["pydeps.ui.output"]
   package.loaded["pydeps.providers.uv"] = {
     tree_features_ready = function()
       return true
@@ -280,7 +281,15 @@ T["tree warns on unknown options and still invokes uv tree"] = function()
     supports_tree_flag = function()
       return false
     end,
-    tree = function() end,
+    tree_command = function()
+      return {
+        cmd = { "uv", "tree" },
+        cwd = vim.fn.getcwd(),
+      }
+    end,
+  }
+  package.loaded["pydeps.ui.output"] = {
+    run_command = function() end,
   }
 
   local commands = require("pydeps.commands")
@@ -292,9 +301,9 @@ T["tree warns on unknown options and still invokes uv tree"] = function()
   vim.bo[bufnr].filetype = "toml"
 
   local notified = false
-  local uv_tree_called = false
-  package.loaded["pydeps.providers.uv"].tree = function()
-    uv_tree_called = true
+  local output_called = false
+  package.loaded["pydeps.ui.output"].run_command = function()
+    output_called = true
   end
 
   local original_notify = vim.notify
@@ -308,10 +317,11 @@ T["tree warns on unknown options and still invokes uv tree"] = function()
 
   vim.notify = original_notify
   MiniTest.expect.equality(notified, true)
-  MiniTest.expect.equality(uv_tree_called, true)
+  MiniTest.expect.equality(output_called, true)
 
   cleanup(dir)
   package.loaded["pydeps.providers.uv"] = original_uv
+  package.loaded["pydeps.ui.output"] = original_output
 end
 
 return T
