@@ -1,8 +1,17 @@
----@class PyDepsUvOptions
+---@class PyDepsUvResolveOptions
 ---@field root? string
----@field on_exit? fun(code: integer)
+---@field on_finish? fun(result: PyDepsUvResolveResult)
 
-local output = require("pydeps.ui.output")
+---@class PyDepsUvResolveResult
+---@field ok boolean
+---@field code integer
+---@field reason? "missing_uv"|"spawn"|"timeout"|"exit"
+---@field stderr? string
+
+---@class PyDepsUvCommand
+---@field cmd string[]
+---@field cwd? string
+
 local util = require("pydeps.util")
 
 local M = {}
@@ -15,30 +24,54 @@ local UV_LOCK_TIMEOUT = 300000
 -- Track whether we've notified about uv not being found
 local uv_notified = false
 
+---@param opts? { silent?: boolean }
 ---@return boolean
-local function ensure_uv()
+local function ensure_uv(opts)
   if vim.fn.executable("uv") == 1 then
     return true
   end
-  if not uv_notified then
+  if not (opts and opts.silent) and not uv_notified then
     vim.notify("pydeps: uv not found in PATH", vim.log.levels.ERROR)
     uv_notified = true
   end
   return false
 end
 
----@param opts? PyDepsUvOptions
+---@param opts? PyDepsUvResolveOptions
 ---@return nil
 function M.resolve(opts)
-  if not ensure_uv() then
+  opts = opts or {}
+
+  if not ensure_uv({ silent = true }) then
+    if opts.on_finish then
+      opts.on_finish({
+        ok = false,
+        code = -1,
+        reason = "missing_uv",
+      })
+    end
     return
   end
-  local cwd = opts and opts.root or nil
-  vim.notify("pydeps: running uv lock", vim.log.levels.INFO)
+
+  local cwd = opts.root or nil
   local stderr = {}
   local completed = false
-
   local timer = nil
+
+  ---@param result PyDepsUvResolveResult
+  ---@return nil
+  local function finish(result)
+    if completed then
+      return
+    end
+    completed = true
+    util.safe_close_timer(timer)
+    timer = nil
+
+    if opts.on_finish then
+      opts.on_finish(result)
+    end
+  end
 
   local job_id = vim.fn.jobstart({ "uv", "lock" }, {
     cwd = cwd,
@@ -49,50 +82,43 @@ function M.resolve(opts)
       end
     end,
     on_exit = function(_, code, _)
-      util.safe_close_timer(timer)
-      timer = nil
-
-      if completed then
-        return
-      end
-      completed = true
-
       if code ~= 0 then
         local err_msg = table.concat(stderr or {}, "\n"):gsub("^%s*(.-)%s*$", "%1")
-        local msg = "pydeps: uv lock failed (exit code " .. code .. ")"
-        if err_msg ~= "" then
-          msg = msg .. "\n" .. err_msg
-        end
-        vim.notify(msg, vim.log.levels.ERROR)
+        finish({
+          ok = false,
+          code = code,
+          reason = "exit",
+          stderr = err_msg ~= "" and err_msg or nil,
+        })
         return
       end
-      vim.notify("pydeps: uv lock succeeded", vim.log.levels.INFO)
-      if opts and opts.on_exit then
-        opts.on_exit(code)
-      end
+      finish({ ok = true, code = code })
     end,
   })
 
   if job_id <= 0 then
-    vim.notify("pydeps: failed to start uv lock", vim.log.levels.ERROR)
+    finish({
+      ok = false,
+      code = -1,
+      reason = "spawn",
+    })
     return
   end
 
   -- Set up timeout timer
   timer = uv.new_timer()
   timer:start(UV_LOCK_TIMEOUT, 0, function()
-    util.safe_close_timer(timer)
-    timer = nil
-    if not completed then
-      completed = true
-      vim.schedule(function()
-        vim.fn.jobstop(job_id)
-        vim.notify("pydeps: uv lock timed out after 5 minutes", vim.log.levels.ERROR)
-        if opts and opts.on_exit then
-          opts.on_exit(-1)
-        end
-      end)
+    if completed then
+      return
     end
+    vim.schedule(function()
+      vim.fn.jobstop(job_id)
+    end)
+    finish({
+      ok = false,
+      code = -1,
+      reason = "timeout",
+    })
   end)
 end
 
@@ -186,59 +212,18 @@ function M._clear_tree_features_cache()
   uv_notified = false
 end
 
----@class PyDepsUvTreeOptions
----@field root string
----@field args string[]
----@field anchor? "center"|"cursor"|"hover"
----@field mode? "split"|"float"
----@field width? integer
----@field height? integer
-
----@param opts PyDepsUvTreeOptions
----@return nil
-function M.tree(opts)
-  if not ensure_uv() then
-    return
+---@param opts { root: string, args: string[] }
+---@return PyDepsUvCommand?
+function M.tree_command(opts)
+  if not ensure_uv({ silent = true }) then
+    return nil
   end
-
   local cmd = { "uv" }
   vim.list_extend(cmd, opts.args or { "tree" })
-
-  local tree_ui = require("pydeps.ui.tree")
-
-  -- For float mode without explicit width, use width_calc callback
-  local width_calc = nil
-  if opts.mode == "float" and not opts.width then
-    width_calc = function(lines)
-      if opts.root then
-        local pyproject_path = vim.fs.joinpath(opts.root, "pyproject.toml")
-        local pyproject = require("pydeps.sources.pyproject")
-        local deps_list = pyproject.parse(pyproject_path)
-        local direct_deps = {}
-        for _, dep in ipairs(deps_list) do
-          direct_deps[dep.name] = true
-        end
-        return tree_ui.estimate_width(lines, direct_deps, deps_list)
-      end
-      return tree_ui.estimate_width(lines, nil, nil)
-    end
-  end
-
-  output.run_command(cmd, {
+  return {
+    cmd = cmd,
     cwd = opts.root,
-    title = "PyDeps Tree",
-    anchor = opts.anchor,
-    mode = opts.mode,
-    width = opts.width,
-    height = opts.height,
-    width_calc = width_calc,
-    on_show = function(buf, lines)
-      tree_ui.setup_keymaps(buf, lines, { root = opts.root })
-    end,
-    on_close = function()
-      -- Cleanup will be handled by BufWipeout autocmd in tree.lua if we add it
-    end,
-  })
+  }
 end
 
 return M
