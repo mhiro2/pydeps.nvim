@@ -107,7 +107,7 @@ function M.stub_pypi_not_found()
   }
 end
 
----@param opts? { dep?: PyDepsDependency, lock_data?: PyDepsLockfileData, missing_lockfile?: boolean }
+---@param opts? { dep?: PyDepsDependency, lock_data?: PyDepsLockfileData, missing_lockfile?: boolean, lockfile_loading?: boolean }
 ---@return nil
 function M.stub_cache(opts)
   opts = opts or {}
@@ -124,7 +124,7 @@ function M.stub_cache(opts)
       return { dep }
     end,
     get_lockfile = function()
-      return lock_data, opts.missing_lockfile == true
+      return lock_data, opts.missing_lockfile == true, opts.lockfile_loading == true
     end,
   }
 end

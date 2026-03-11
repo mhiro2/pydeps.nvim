@@ -17,17 +17,23 @@ function M.run()
   local root = buffer_context.find_root(bufnr)
   local resolved = {}
   local missing_lockfile = false
+  local lockfile_loading = false
 
   if root then
     local lock_data, missing, loading = cache.get_lockfile(root)
     resolved = lock_data.resolved or {}
     missing_lockfile = missing
+    lockfile_loading = loading
     if loading then
       missing_lockfile = false
     end
   end
 
-  info.show(target, target and resolved[target.name] or nil, { lockfile_missing = missing_lockfile })
+  info.show(target, target and resolved[target.name] or nil, {
+    lockfile_missing = missing_lockfile,
+    lockfile_loading = lockfile_loading,
+    root = root,
+  })
 end
 
 return M

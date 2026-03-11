@@ -105,4 +105,22 @@ T["dependency_view marks yanked releases as error status"] = function()
   MiniTest.expect.equality(view.status_text, "yanked")
 end
 
+T["dependency_view marks lockfile loading as loading status"] = function()
+  stub_pypi()
+  local dependency_view = require("pydeps.ui.dependency_view")
+
+  local view = dependency_view.build({
+    name = "pkg",
+    spec = "pkg>=1.0",
+  }, {
+    current_env = {},
+    lockfile_loading = true,
+  })
+
+  MiniTest.expect.equality(view.pending, "loading")
+  MiniTest.expect.equality(view.class, "loading")
+  MiniTest.expect.equality(view.status_kind, "unknown")
+  MiniTest.expect.equality(view.status_text, "Loading")
+end
+
 return T

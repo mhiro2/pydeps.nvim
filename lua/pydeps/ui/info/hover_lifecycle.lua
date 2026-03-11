@@ -314,16 +314,25 @@ local function cursor_hover_context()
   local root = buffer_context.find_root(bufnr)
   local resolved = {}
   local missing_lockfile = false
+  local lockfile_loading = false
   if root then
-    local lock_data, missing = cache.get_lockfile(root)
+    local lock_data, missing, loading = cache.get_lockfile(root)
     resolved = lock_data.resolved or {}
     missing_lockfile = missing
+    lockfile_loading = loading
+    if loading then
+      missing_lockfile = false
+    end
   end
 
-  return dep, resolved[dep.name], {
-    lockfile_missing = missing_lockfile,
-    root = root,
-  }, bufnr
+  return dep,
+    resolved[dep.name],
+    {
+      lockfile_missing = missing_lockfile,
+      lockfile_loading = lockfile_loading,
+      root = root,
+    },
+    bufnr
 end
 
 ---@param dep? PyDepsDependency

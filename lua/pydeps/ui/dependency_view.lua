@@ -88,7 +88,13 @@ local function summarize_status(class, resolved)
   if class == "update" or class == "major" then
     return "update", "update available", ui_shared.icon_for("update"), nil, true
   end
-  if class == "searching" or class == "loading" or class == "unknown" or class == nil then
+  if class == "searching" then
+    return "unknown", config.options.ui.status_text.searching, ui_shared.icon_for("searching"), nil, false
+  end
+  if class == "loading" then
+    return "unknown", config.options.ui.status_text.loading, ui_shared.icon_for("loading"), nil, false
+  end
+  if class == "unknown" or class == nil then
     return "unknown", "unknown", ui_shared.icon_for("unknown"), nil, false
   end
   return "ok", "active", ui_shared.icon_for("ok"), resolved and "(up-to-date)" or nil, false
@@ -115,6 +121,10 @@ function M.build(dep, opts)
   local latest = latest_from_meta(meta, pypi_provider)
   local lockfile_missing = opts.lockfile_missing == true
   local lockfile_loading = opts.lockfile_loading == true
+  local pending = opts.pending
+  if pending == nil and lockfile_loading and resolved == nil then
+    pending = "loading"
+  end
   local unresolved = resolved == nil and meta ~= nil and not lockfile_missing and not lockfile_loading
   local marker = ui_shared.extract_marker(dep.spec)
   local active = status.is_active(dep, current_env)
@@ -136,7 +146,7 @@ function M.build(dep, opts)
     meta = meta,
     missing_lockfile = lockfile_missing,
     unresolved = unresolved,
-    pending = opts.pending,
+    pending = pending,
     latest = latest,
     resolved = resolved,
   })
@@ -159,7 +169,7 @@ function M.build(dep, opts)
     resolved = resolved,
     latest = latest,
     meta = meta,
-    pending = opts.pending,
+    pending = pending,
     missing_lockfile = lockfile_missing,
     missing_lockfile_text = config.options.missing_lockfile_virtual_text or "missing uv.lock",
     lockfile_loading = lockfile_loading,

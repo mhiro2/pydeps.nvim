@@ -266,6 +266,113 @@ T["audit warns when uv.lock is missing"] = function()
   package.loaded["pydeps.commands"] = original_commands
 end
 
+T["provenance uses project dependencies outside pyproject buffers"] = function()
+  local original_commands = package.loaded["pydeps.commands"]
+  local original_provenance_command = package.loaded["pydeps.commands.provenance"]
+  local original_provenance_ui = package.loaded["pydeps.ui.provenance"]
+
+  local captured = nil
+  package.loaded["pydeps.commands"] = nil
+  package.loaded["pydeps.commands.provenance"] = nil
+  package.loaded["pydeps.ui.provenance"] = {
+    show = function(target, deps, graph)
+      captured = {
+        target = target,
+        deps = deps,
+        graph = graph,
+      }
+      return true
+    end,
+  }
+
+  local commands = require("pydeps.commands")
+  local dir = create_project({
+    "[project]",
+    'dependencies = ["requests>=2.31", "rich>=13"]',
+  }, {
+    requests = "2.31.0",
+    rich = "13.7.0",
+  })
+  local script_path = dir .. "/app.py"
+  vim.fn.writefile({ "print('hello')" }, script_path)
+
+  local script_buf = vim.fn.bufadd(script_path)
+  vim.fn.bufload(script_buf)
+  vim.api.nvim_set_current_buf(script_buf)
+
+  commands.provenance("requests")
+
+  MiniTest.expect.equality(captured ~= nil, true)
+  MiniTest.expect.equality(captured.target, "requests")
+  MiniTest.expect.equality(#captured.deps, 2)
+  MiniTest.expect.equality(captured.deps[1].name, "requests")
+  MiniTest.expect.equality(captured.deps[2].name, "rich")
+
+  cleanup(dir)
+  package.loaded["pydeps.commands"] = original_commands
+  package.loaded["pydeps.commands.provenance"] = original_provenance_command
+  package.loaded["pydeps.ui.provenance"] = original_provenance_ui
+end
+
+T["info preserves lockfile loading state"] = function()
+  local original_cache = package.loaded["pydeps.core.cache"]
+  local original_commands = package.loaded["pydeps.commands"]
+  local original_info_command = package.loaded["pydeps.commands.info"]
+  local original_info = package.loaded["pydeps.ui.info"]
+
+  local captured = nil
+  package.loaded["pydeps.core.cache"] = {
+    get_pyproject = function()
+      return {
+        {
+          name = "requests",
+          spec = "requests>=2.31",
+          line = 2,
+          col_start = 18,
+          col_end = 25,
+        },
+      }
+    end,
+    get_lockfile = function()
+      return { resolved = {} }, false, true
+    end,
+  }
+  package.loaded["pydeps.commands"] = nil
+  package.loaded["pydeps.commands.info"] = nil
+  package.loaded["pydeps.ui.info"] = {
+    show = function(dep, resolved, opts)
+      captured = {
+        dep = dep,
+        resolved = resolved,
+        opts = opts,
+      }
+    end,
+  }
+
+  local commands = require("pydeps.commands")
+  local dir = create_project({
+    "[project]",
+    'dependencies = ["requests>=2.31"]',
+  })
+
+  vim.api.nvim_win_set_cursor(0, { 2, 18 })
+  commands.info()
+
+  MiniTest.expect.equality(captured ~= nil, true)
+  MiniTest.expect.equality(captured.dep.name, "requests")
+  MiniTest.expect.equality(captured.opts.lockfile_loading, true)
+  MiniTest.expect.equality(captured.opts.lockfile_missing, false)
+  local actual_root = vim.uv.fs_realpath(captured.opts.root) or captured.opts.root
+  local expected_root = vim.uv.fs_realpath(dir) or dir
+  MiniTest.expect.equality(actual_root, expected_root)
+
+  cleanup(dir)
+  package.loaded["pydeps.core.cache"] = original_cache
+  package.loaded["pydeps.commands"] = original_commands
+  package.loaded["pydeps.commands.info"] = original_info_command
+  package.loaded["pydeps.ui.info"] = original_info
+end
+
 T["tree warns on unknown options and still invokes uv tree"] = function()
   local original_uv = package.loaded["pydeps.providers.uv"]
   local original_output = package.loaded["pydeps.ui.output"]
