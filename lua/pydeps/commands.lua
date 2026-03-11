@@ -1,5 +1,5 @@
+local buffer_context = require("pydeps.core.buffer_context")
 local cache = require("pydeps.core.cache")
-local project = require("pydeps.core.project")
 local state = require("pydeps.core.state")
 local edit = require("pydeps.sources.pyproject_edit")
 local info = require("pydeps.ui.info")
@@ -9,26 +9,6 @@ local pypi = require("pydeps.providers.pypi")
 local util = require("pydeps.util")
 
 local M = {}
-
--- Helper functions
-
----@return integer
-local function current_buf()
-  return vim.api.nvim_get_current_buf()
-end
-
----@param bufnr integer
----@return boolean
-local function is_pyproject_buf(bufnr)
-  local name = vim.api.nvim_buf_get_name(bufnr)
-  return name:match("pyproject%.toml$") ~= nil
-end
-
----@param bufnr integer
----@return PyDepsDependency[]
-local function parse_buffer_deps(bufnr)
-  return cache.get_pyproject(bufnr)
-end
 
 ---@param lock_data PyDepsLockfileData
 ---@return PyDepsAuditPackage[]
@@ -192,7 +172,7 @@ local function find_dependency_to_update(target, deps)
   end
 
   -- Otherwise, use dependency under cursor
-  local dep = util.dep_under_cursor(deps)
+  local dep = buffer_context.dep_under_cursor(deps)
   if dep then
     return dep
   end
@@ -216,13 +196,13 @@ end
 ---@param target? string
 ---@return nil
 function M.update(target)
-  local bufnr = current_buf()
-  if not is_pyproject_buf(bufnr) then
+  local bufnr = buffer_context.current_buf()
+  if not buffer_context.is_pyproject_buf(bufnr) then
     vim.notify("pydeps: open pyproject.toml to update dependencies", vim.log.levels.WARN)
     return
   end
 
-  local deps = parse_buffer_deps(bufnr)
+  local deps = buffer_context.get_deps(bufnr)
   local dep = find_dependency_to_update(target, deps)
 
   if not dep then
@@ -235,8 +215,8 @@ end
 ---@param opts? { diff_only?: boolean, root?: string }
 ---@return nil
 function M.resolve(opts)
-  local bufnr = current_buf()
-  local root = (opts and opts.root) or project.find_root(bufnr)
+  local bufnr = buffer_context.current_buf()
+  local root = (opts and opts.root) or buffer_context.find_root(bufnr)
   if not root then
     vim.notify("pydeps: project root not found", vim.log.levels.WARN)
     return
@@ -347,8 +327,8 @@ local function resolve_tree_target(bufnr, tree_args, args_str, opts)
 
   if not target then
     -- Try cursor dependency
-    local deps = parse_buffer_deps(bufnr)
-    local dep = util.dep_under_cursor(deps)
+    local deps = buffer_context.get_deps(bufnr)
+    local dep = buffer_context.dep_under_cursor(deps)
     target = dep and dep.name
   end
 
@@ -384,8 +364,8 @@ function M.tree(args_str, bang, opts)
   if #tree_args.unknown_options > 0 then
     vim.notify("pydeps: unknown tree options: " .. table.concat(tree_args.unknown_options, ", "), vim.log.levels.WARN)
   end
-  local bufnr = current_buf()
-  local root = project.find_root(bufnr)
+  local bufnr = buffer_context.current_buf()
+  local root = buffer_context.find_root(bufnr)
   if not root then
     vim.notify("pydeps: project root not found", vim.log.levels.WARN)
     return
@@ -427,18 +407,18 @@ end
 ---@param target? string
 ---@return nil
 function M.provenance(target)
-  local bufnr = current_buf()
-  if not is_pyproject_buf(bufnr) and not target then
+  local bufnr = buffer_context.current_buf()
+  if not buffer_context.is_pyproject_buf(bufnr) and not target then
     vim.notify("pydeps: open pyproject.toml or pass a package name", vim.log.levels.WARN)
     return
   end
-  local root = project.find_root(bufnr)
+  local root = buffer_context.find_root(bufnr)
   if not root then
     vim.notify("pydeps: project root not found", vim.log.levels.WARN)
     return
   end
-  local deps = parse_buffer_deps(bufnr)
-  local dep = target and { name = target } or util.dep_under_cursor(deps)
+  local deps = buffer_context.get_deps(bufnr)
+  local dep = target and { name = target } or buffer_context.dep_under_cursor(deps)
   if not dep then
     vim.ui.input({ prompt = "pydeps: package name" }, function(input)
       if input and input ~= "" then
@@ -468,16 +448,16 @@ end
 
 ---@return nil
 function M.info()
-  local bufnr = current_buf()
-  if not is_pyproject_buf(bufnr) then
+  local bufnr = buffer_context.current_buf()
+  if not buffer_context.is_pyproject_buf(bufnr) then
     vim.notify("pydeps: open pyproject.toml to inspect dependencies", vim.log.levels.WARN)
     return
   end
 
-  local deps = parse_buffer_deps(bufnr)
-  local target = util.dep_under_cursor(deps)
+  local deps = buffer_context.get_deps(bufnr)
+  local target = buffer_context.dep_under_cursor(deps)
 
-  local root = project.find_root(bufnr)
+  local root = buffer_context.find_root(bufnr)
   local resolved = {}
   local missing_lockfile = false
   if root then
@@ -493,8 +473,8 @@ end
 
 ---@return nil
 function M.audit()
-  local bufnr = current_buf()
-  local root = project.find_root(bufnr)
+  local bufnr = buffer_context.current_buf()
+  local root = buffer_context.find_root(bufnr)
   if not root then
     vim.notify("pydeps: project root not found", vim.log.levels.WARN)
     return
