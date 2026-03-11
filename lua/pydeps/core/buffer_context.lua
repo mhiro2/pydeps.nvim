@@ -3,6 +3,11 @@ local util = require("pydeps.util")
 local M = {}
 
 ---@return table
+local function get_pyproject()
+  return require("pydeps.sources.pyproject")
+end
+
+---@return table
 local function get_cache()
   return require("pydeps.core.cache")
 end
@@ -31,6 +36,29 @@ function M.get_deps(bufnr)
     return {}
   end
   return get_cache().get_pyproject(bufnr)
+end
+
+---@param bufnr integer
+---@return PyDepsDependency[]
+function M.get_project_deps(bufnr)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return {}
+  end
+  if M.is_pyproject_buf(bufnr) then
+    return M.get_deps(bufnr)
+  end
+
+  local root = M.find_root(bufnr)
+  if not root then
+    return {}
+  end
+
+  local path = get_project().find_file(root, "pyproject.toml")
+  if not path then
+    return {}
+  end
+
+  return get_pyproject().parse(path)
 end
 
 ---@param deps PyDepsDependency[]

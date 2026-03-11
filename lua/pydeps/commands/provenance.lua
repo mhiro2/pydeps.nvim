@@ -19,7 +19,7 @@ function M.run(target)
     return
   end
 
-  local deps = buffer_context.get_deps(bufnr)
+  local deps = buffer_context.get_project_deps(bufnr)
   local dep = target and { name = target } or buffer_context.dep_under_cursor(deps)
   if not dep then
     vim.ui.input({ prompt = "pydeps: package name" }, function(input)
