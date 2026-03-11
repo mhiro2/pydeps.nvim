@@ -189,108 +189,122 @@ local function validate_min(name, value, min)
   end
 end
 
----@param opts table
-local function validate_top_level(opts)
-  validate_field("show_virtual_text", opts.show_virtual_text, "boolean", true)
-  validate_field("show_missing_virtual_text", opts.show_missing_virtual_text, "boolean", true)
-  validate_field("show_missing_lockfile_virtual_text", opts.show_missing_lockfile_virtual_text, "boolean", true)
-  validate_field("missing_lockfile_virtual_text", opts.missing_lockfile_virtual_text, "string", true)
-  validate_field("virtual_text_hl", opts.virtual_text_hl, "string", true)
-  validate_field("virtual_text_missing_hl", opts.virtual_text_missing_hl, "string", true)
-  validate_field("ui", opts.ui, "table", true)
-  validate_field("auto_refresh", opts.auto_refresh, "boolean", true)
-  validate_field("refresh_debounce_ms", opts.refresh_debounce_ms, "number", true)
-  validate_min("refresh_debounce_ms", opts.refresh_debounce_ms, 0)
-  validate_field("info_window_border", opts.info_window_border, "string", true)
-  validate_field("select_menu_border", opts.select_menu_border, "string", true)
-  validate_field("select_menu_relative", opts.select_menu_relative, "string", true)
-  validate_field("audit_window_border", opts.audit_window_border, "string", true)
-  validate_field("notify_on_missing_lockfile", opts.notify_on_missing_lockfile, "boolean", true)
-  validate_field("enable_diagnostics", opts.enable_diagnostics, "boolean", true)
-  validate_field("pypi_url", opts.pypi_url, "string", true)
-  validate_field("pypi_cache_ttl", opts.pypi_cache_ttl, "number", true)
-  validate_min("pypi_cache_ttl", opts.pypi_cache_ttl, 1)
-  validate_field("osv_url", opts.osv_url, "string", true)
-  validate_field("osv_cache_ttl", opts.osv_cache_ttl, "number", true)
-  validate_min("osv_cache_ttl", opts.osv_cache_ttl, 1)
-  validate_field("enable_completion", opts.enable_completion, "boolean", true)
-  validate_field("diagnostic_severity", opts.diagnostic_severity, "table", true)
-  validate_field("completion", opts.completion, "table", true)
-end
+---@class PyDepsValidationSpec
+---@field name string
+---@field validator any
+---@field min? number
+---@field fields? PyDepsValidationSpec[]
 
----@param severity table
-local function validate_diagnostic_severity(severity)
-  validate_field("yanked", severity.yanked, "number", true)
-  validate_field("marker", severity.marker, "number", true)
-  validate_field("lock", severity.lock, "number", true)
-end
-
----@param completion table
-local function validate_completion(completion)
-  validate_field("pypi_search", completion.pypi_search, "boolean", true)
-  validate_field("pypi_search_min", completion.pypi_search_min, "number", true)
-  validate_field("max_results", completion.max_results, "number", true)
-  validate_min("max_results", completion.max_results, 1)
-end
-
----@param icons table
-local function validate_ui_icons(icons)
-  local icon_fields = {
-    "update",
-    "ok",
-    "inactive",
-    "yanked",
-    "lock_mismatch",
-    "pin_not_found",
-    "unknown",
-    "package",
-    "searching",
-    "loading",
-    "spec",
-    "lock",
-    "latest",
-    "extras",
-    "markers",
-    "status",
-    "deps",
-    "pypi",
-    "fallback",
+---@param name string
+---@param validator any
+---@param opts? table
+---@return PyDepsValidationSpec
+local function spec(name, validator, opts)
+  local field = {
+    name = name,
+    validator = validator,
   }
-  validate_field("enabled", icons.enabled, "boolean", true)
-  for _, field in ipairs(icon_fields) do
-    local field_type = field == "fallback" and "table" or "string"
-    validate_field(field, icons[field], field_type, true)
+  for key, value in pairs(opts or {}) do
+    field[key] = value
+  end
+  return field
+end
+
+---@param target PyDepsValidationSpec[]
+---@param names string[]
+---@param validator any
+local function add_specs(target, names, validator)
+  for _, name in ipairs(names) do
+    target[#target + 1] = spec(name, validator)
   end
 end
 
----@param show table
-local function validate_ui_show(show)
-  validate_field("resolved", show.resolved, "boolean", true)
-  validate_field("latest", show.latest, "boolean", true)
-end
+local diagnostic_severity_specs = {}
+add_specs(diagnostic_severity_specs, { "yanked", "marker", "lock" }, "number")
 
----@param status_text table
-local function validate_ui_status_text(status_text)
-  validate_field("searching", status_text.searching, "string", true)
-  validate_field("loading", status_text.loading, "string", true)
-end
+local completion_specs = {
+  spec("pypi_search", "boolean"),
+  spec("pypi_search_min", "number"),
+  spec("max_results", "number", { min = 1 }),
+}
 
----@param ui table
-local function validate_ui(ui)
-  validate_field("enabled", ui.enabled, "boolean", true)
-  validate_field("section_padding", ui.section_padding, "number", true)
-  validate_field("icons", ui.icons, "table", true)
-  validate_field("show", ui.show, "table", true)
-  validate_field("highlights", ui.highlights, "table", true)
+local ui_icon_specs = {
+  spec("enabled", "boolean"),
+  spec("fallback", "table"),
+}
+add_specs(ui_icon_specs, {
+  "update",
+  "ok",
+  "inactive",
+  "yanked",
+  "lock_mismatch",
+  "pin_not_found",
+  "unknown",
+  "package",
+  "searching",
+  "loading",
+  "spec",
+  "lock",
+  "latest",
+  "extras",
+  "markers",
+  "status",
+  "deps",
+  "pypi",
+}, "string")
 
-  if ui.icons then
-    validate_ui_icons(ui.icons)
-  end
-  if ui.show then
-    validate_ui_show(ui.show)
-  end
-  if ui.status_text then
-    validate_ui_status_text(ui.status_text)
+local ui_show_specs = {}
+add_specs(ui_show_specs, { "resolved", "latest" }, "boolean")
+
+local ui_status_text_specs = {}
+add_specs(ui_status_text_specs, { "searching", "loading" }, "string")
+
+local ui_specs = {
+  spec("enabled", "boolean"),
+  spec("section_padding", "number"),
+  spec("icons", "table", { fields = ui_icon_specs }),
+  spec("show", "table", { fields = ui_show_specs }),
+  spec("highlights", "table"),
+  spec("status_text", "table", { fields = ui_status_text_specs }),
+}
+
+local top_level_specs = {
+  spec("show_virtual_text", "boolean"),
+  spec("show_missing_virtual_text", "boolean"),
+  spec("show_missing_lockfile_virtual_text", "boolean"),
+  spec("missing_lockfile_virtual_text", "string"),
+  spec("virtual_text_hl", "string"),
+  spec("virtual_text_missing_hl", "string"),
+  spec("ui", "table", { fields = ui_specs }),
+  spec("auto_refresh", "boolean"),
+  spec("refresh_debounce_ms", "number", { min = 0 }),
+  spec("info_window_border", "string"),
+  spec("select_menu_border", "string"),
+  spec("select_menu_relative", "string"),
+  spec("audit_window_border", "string"),
+  spec("notify_on_missing_lockfile", "boolean"),
+  spec("enable_diagnostics", "boolean"),
+  spec("pypi_url", "string"),
+  spec("pypi_cache_ttl", "number", { min = 1 }),
+  spec("osv_url", "string"),
+  spec("osv_cache_ttl", "number", { min = 1 }),
+  spec("enable_completion", "boolean"),
+  spec("diagnostic_severity", "table", { fields = diagnostic_severity_specs }),
+  spec("completion", "table", { fields = completion_specs }),
+}
+
+---@param value table
+---@param specs PyDepsValidationSpec[]
+local function validate_specs(value, specs)
+  for _, current in ipairs(specs) do
+    local field_value = value[current.name]
+    validate_field(current.name, field_value, current.validator, true)
+    if current.min ~= nil then
+      validate_min(current.name, field_value, current.min)
+    end
+    if current.fields and field_value ~= nil then
+      validate_specs(field_value, current.fields)
+    end
   end
 end
 
@@ -298,19 +312,7 @@ end
 function M.setup(opts)
   opts = opts or {}
 
-  -- Validate top-level options
-  validate_top_level(opts)
-
-  -- Validate nested options
-  if opts.diagnostic_severity then
-    validate_diagnostic_severity(opts.diagnostic_severity)
-  end
-  if opts.completion then
-    validate_completion(opts.completion)
-  end
-  if opts.ui then
-    validate_ui(opts.ui)
-  end
+  validate_specs(opts, top_level_specs)
 
   M.options = vim.tbl_deep_extend("force", M.defaults, opts)
 end
