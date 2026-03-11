@@ -25,6 +25,20 @@ local function setup_info()
   return info_helpers.require_info()
 end
 
+---@param lines string[]
+---@return string
+local function create_named_project(lines)
+  local dir = vim.fn.tempname()
+  vim.fn.mkdir(dir, "p")
+  local path = dir .. "/pyproject.toml"
+  vim.fn.writefile(lines, path)
+  local bufnr = vim.fn.bufadd(path)
+  vim.fn.bufload(bufnr)
+  vim.api.nvim_set_current_buf(bufnr)
+  vim.bo[bufnr].filetype = "toml"
+  return dir
+end
+
 T["hover_lifecycle show replaces an existing hover"] = function()
   local info = setup_info()
   local dep = info_helpers.dep()
@@ -132,6 +146,34 @@ T["hover_lifecycle keeps hover available when PyPI metadata is missing"] = funct
 
   MiniTest.expect.equality(hover_count(), 1)
   info.close_hover()
+end
+
+T["hover_lifecycle show_at_cursor keeps loading state while lockfile refreshes"] = function()
+  info_helpers.stub_pypi_not_found()
+  info_helpers.stub_cache({
+    lock_data = {
+      resolved = {},
+      packages = {},
+    },
+    lockfile_loading = true,
+  })
+
+  local dir = create_named_project({
+    "[project]",
+    'dependencies = ["testpkg>=1.0"]',
+  })
+  local info = info_helpers.require_info()
+
+  vim.api.nvim_win_set_cursor(0, { 2, 5 })
+  info.show_at_cursor()
+  vim.wait(50)
+
+  local lines = info_helpers.hover_lines()
+  MiniTest.expect.equality(table.concat(lines, "\n"):match("[^\n]*lock[^\n]*%(loading%.%.%.%)") ~= nil, true)
+  MiniTest.expect.equality(table.concat(lines, "\n"):match("[^\n]*status[^\n]*Loading") ~= nil, true)
+
+  info.close_hover()
+  vim.fn.delete(dir, "rf")
 end
 
 T["hover_lifecycle exposes suspend and resume close state"] = function()

@@ -85,6 +85,17 @@ T["render_lines shows missing lockfile text when lockfile is absent"] = function
   MiniTest.expect.equality(table.concat(lines, "\n"):match("[^\n]*lock[^\n]*%(missing%)") ~= nil, true)
 end
 
+T["render_lines shows loading while lockfile is refreshing"] = function()
+  local lines = render({
+    resolved = vim.NIL,
+    class = "loading",
+    status_text = "Loading",
+  }, { lockfile_loading = true })
+
+  MiniTest.expect.equality(table.concat(lines, "\n"):match("[^\n]*lock[^\n]*%(loading%.%.%.%)") ~= nil, true)
+  MiniTest.expect.equality(table.concat(lines, "\n"):match("[^\n]*status[^\n]*Loading") ~= nil, true)
+end
+
 T["render_lines shows not found when dependency is not in lockfile"] = function()
   local lines = render({ resolved = vim.NIL }, { lockfile_missing = false })
   MiniTest.expect.equality(table.concat(lines, "\n"):match("[^\n]*lock[^\n]*%(not found%)") ~= nil, true)

@@ -7,6 +7,7 @@ local M = {}
 
 ---@class PyDepsRenderOptions
 ---@field lockfile_missing boolean
+---@field lockfile_loading? boolean
 ---@field root? string
 
 ---@class PyDepsStatusResult
@@ -148,6 +149,8 @@ function M.build_lines(view, opts)
 
   if view.resolved then
     table.insert(lines, format_line(ui_shared.icon_for("lock"), "lock", view.resolved, status.lock_status or ""))
+  elseif opts and opts.lockfile_loading then
+    table.insert(lines, format_line(ui_shared.icon_for("loading"), "lock", "(loading...)"))
   elseif opts and opts.lockfile_missing then
     table.insert(lines, format_line(ui_shared.icon_for("lock"), "lock", "(missing)"))
   else
