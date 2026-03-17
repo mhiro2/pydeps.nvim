@@ -18,7 +18,7 @@ local function show_lock_diff(root)
     vim.notify("pydeps: uv.lock not found", vim.log.levels.WARN)
     return
   end
-  lock_diff.show(snapshot, current.resolved or {}, { title = "PyDeps Lock Diff" })
+  lock_diff.show(snapshot, current.resolved or {}, { title = "PyDeps Lock Diff", root = root })
 end
 
 ---@param result PyDepsUvResolveResult
@@ -77,7 +77,7 @@ function M.run(opts)
       if missing then
         vim.notify("pydeps: uv.lock not found after resolve", vim.log.levels.WARN)
       else
-        lock_diff.show(before.resolved or {}, after.resolved or {}, { title = "PyDeps Lock Diff" })
+        lock_diff.show(before.resolved or {}, after.resolved or {}, { title = "PyDeps Lock Diff", root = root })
         cache.set_lock_snapshot(root, after.resolved or {})
       end
       state.refresh_all()
