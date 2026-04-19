@@ -53,30 +53,32 @@ end
 ---Check if Tree-sitter and toml parser are available
 ---@return boolean
 function M.is_available()
-  -- Check if vim.treesitter is available
   if not vim.treesitter or not vim.treesitter.language then
     return false
   end
 
-  -- Return cached result if available
   if M._available ~= nil then
     return M._available
   end
 
-  local ok_lang, lang = pcall(vim.treesitter.language.get_lang, "toml")
-  if not ok_lang or not lang then
+  local ok_add = pcall(vim.treesitter.language.add, "toml")
+  if not ok_add then
     M._available = false
     return false
   end
 
   local inspect_language = vim.treesitter.language.inspect
-  if type(inspect_language) == "function" then
-    local ok_inspect = pcall(inspect_language, lang)
-    M._available = ok_inspect
-    return ok_inspect
+  if type(inspect_language) ~= "function" then
+    M._available = false
+    return false
   end
 
-  -- Fallback for older Tree-sitter API shapes.
+  local ok_inspect, info = pcall(inspect_language, "toml")
+  if not ok_inspect or not info then
+    M._available = false
+    return false
+  end
+
   M._available = true
   return true
 end
@@ -88,15 +90,8 @@ local function get_parser(bufnr)
   if not M.is_available() then
     return nil
   end
-  local ok, ts_parsers = pcall(require, "vim.treesitter")
-  if not ok then
-    return nil
-  end
-  local ok2, parser = pcall(ts_parsers.get_parser, bufnr, "toml")
-  if not ok2 then
-    return nil
-  end
-  return parser
+
+  return vim.treesitter.get_parser(bufnr, "toml")
 end
 
 ---Ensure the comment query is initialised

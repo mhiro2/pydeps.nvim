@@ -2,6 +2,12 @@ local M = {}
 
 local uv = vim.uv
 
+---@param version vim.Version
+---@return boolean
+local function is_supported_nvim(version)
+  return vim.version.ge(version, { 0, 12, 0 })
+end
+
 ---@param cmd string[]
 ---@return string|nil output, boolean success
 local function run_command(cmd)
@@ -18,14 +24,13 @@ end
 function M.check()
   vim.health.start("pydeps.nvim")
 
-  -- Check Neovim version
   local nvim_version = vim.version()
-  if vim.fn.has("nvim-0.10") == 1 then
+  if is_supported_nvim(nvim_version) then
     vim.health.ok(string.format("Neovim version: %d.%d.%d", nvim_version.major, nvim_version.minor, nvim_version.patch))
   else
     vim.health.error(
       string.format(
-        "Neovim version: %d.%d.%d (expected >= 0.10.0)",
+        "Neovim version: %d.%d.%d (expected >= 0.12.0)",
         nvim_version.major,
         nvim_version.minor,
         nvim_version.patch
@@ -85,22 +90,13 @@ function M.check()
     })
   end
 
-  -- Check nvim-treesitter and toml parser (required)
-  local has_treesitter = pcall(require, "nvim-treesitter.parsers")
-  if has_treesitter then
-    local parsers = require("nvim-treesitter.parsers")
-    if parsers.has_parser("toml") then
-      vim.health.ok("nvim-treesitter: toml parser installed")
-    else
-      vim.health.error("nvim-treesitter: toml parser not installed", {
-        "Install toml parser with :TSInstall toml",
-        "pydeps.nvim requires the toml parser for accurate inline badge alignment and comment-aware positioning",
-      })
-    end
+  local ts_toml = require("pydeps.treesitter.toml")
+  if ts_toml.is_available() then
+    vim.health.ok("Tree-sitter: TOML parser available")
   else
-    vim.health.error("nvim-treesitter: not installed", {
-      "Install nvim-treesitter with the toml parser",
-      "pydeps.nvim requires Tree-sitter for accurate inline badge alignment and comment-aware positioning",
+    vim.health.error("Tree-sitter: TOML parser not available", {
+      "Install a TOML parser so it is discoverable as parser/toml.* on 'runtimepath'",
+      "pydeps.nvim requires the TOML parser for accurate inline badge alignment and comment-aware positioning",
     })
   end
 

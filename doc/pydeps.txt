@@ -42,10 +42,11 @@ Supported Files:
 2. REQUIREMENTS                                           *pydeps-requirements*
 
 Required:
-  • Neovim ≥ 0.10
+  • Neovim ≥ 0.12
   • uv - https://docs.astral.sh/uv/
-  • nvim-treesitter with toml parser - for accurate inline badge alignment
-    (section-aware anchor column calculation and comment-aware positioning)
+  • Tree-sitter toml parser on 'runtimepath' - for accurate inline badge
+    alignment (section-aware anchor column calculation and comment-aware
+    positioning)
 
 Optional (but recommended):
   • Python (python3 or python) - for environment detection
@@ -62,6 +63,10 @@ Using lazy.nvim: >lua
     end,
   }
 <
+
+`pydeps.nvim` does not require `nvim-treesitter`, but it does require a
+Tree-sitter TOML parser that Neovim 0.12 can discover as `parser/toml.*`
+on 'runtimepath'.
 
 Using packer.nvim: >lua
   use {

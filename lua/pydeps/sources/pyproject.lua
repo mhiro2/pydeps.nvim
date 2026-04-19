@@ -16,7 +16,7 @@ end
 function M.parse(path, lines, bufnr)
   if not ts_toml or not ts_toml.is_available() then
     if not _notified_unavailable then
-      vim.notify("pydeps: nvim-treesitter toml parser is required", vim.log.levels.ERROR)
+      vim.notify("pydeps: Tree-sitter TOML parser is required", vim.log.levels.ERROR)
       _notified_unavailable = true
     end
     return {}

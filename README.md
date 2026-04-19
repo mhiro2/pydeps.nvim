@@ -66,9 +66,9 @@ pydeps.nvim brings the **crates.nvim workflow to Python** with a focus on what w
 
 ## 📦 Requirements
 
-- Neovim ≥ 0.10
+- Neovim ≥ 0.12
 - `uv`
-- `nvim-treesitter` with `toml` parser (required for accurate inline badge alignment and comment-aware positioning)
+- Tree-sitter `toml` parser available on `runtimepath` (required for accurate inline badge alignment and comment-aware positioning)
 
 ## 🚀 Installation
 
@@ -80,6 +80,8 @@ pydeps.nvim brings the **crates.nvim workflow to Python** with a focus on what w
   end,
 }
 ```
+
+`pydeps.nvim` does not require `nvim-treesitter`, but it does require a Tree-sitter TOML parser that Neovim 0.12 can discover as `parser/toml.*` on `runtimepath`.
 
 ## ⚙️ Configuration
 
