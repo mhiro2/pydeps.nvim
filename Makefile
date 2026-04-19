@@ -1,25 +1,18 @@
-.PHONY: deps deps-mini deps-treesitter deps-grammars treesitter-build treesitter-install fmt lint stylua stylua-check selene test
+.PHONY: deps deps-mini deps-grammars treesitter-build treesitter-install fmt lint stylua stylua-check selene test
 
 CC ?= cc
 NVIM ?= nvim
 GIT ?= git
 MINI_PATH ?= deps/mini.nvim
-TREESITTER_PATH ?= deps/nvim-treesitter
 TREESITTER_INSTALL_DIR ?= deps/treesitter
 TS_GRAMMAR_TOML ?= deps/tree-sitter-toml
 
-deps: deps-mini deps-treesitter treesitter-install
+deps: deps-mini treesitter-install
 
 deps-mini:
 	@if [ ! -d "$(MINI_PATH)" ]; then \
 		mkdir -p "$$(dirname "$(MINI_PATH)")"; \
 		$(GIT) clone --depth 1 https://github.com/echasnovski/mini.nvim "$(MINI_PATH)"; \
-	fi
-
-deps-treesitter:
-	@if [ ! -d "$(TREESITTER_PATH)" ]; then \
-		mkdir -p "$$(dirname "$(TREESITTER_PATH)")"; \
-		$(GIT) clone --depth 1 https://github.com/nvim-treesitter/nvim-treesitter "$(TREESITTER_PATH)"; \
 	fi
 
 deps-grammars:
@@ -51,5 +44,5 @@ selene:
 	selene ./lua ./plugin ./tests
 
 test: deps
-	MINI_PATH="$(MINI_PATH)" TREESITTER_INSTALL_DIR="$(TREESITTER_INSTALL_DIR)" TREESITTER_PATH="$(TREESITTER_PATH)" \
+	MINI_PATH="$(MINI_PATH)" TREESITTER_INSTALL_DIR="$(TREESITTER_INSTALL_DIR)" \
 		$(NVIM) --headless -u tests/minimal_init.lua -c "lua require('tests.run').run()" -c "qa"
