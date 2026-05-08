@@ -1,3 +1,5 @@
+local jobs = require("pydeps.core.jobs")
+
 local M = {}
 
 ---@param lines string[]
@@ -234,7 +236,8 @@ function M.run_command(cmd, opts)
         vim.list_extend(stderr, data)
       end
     end,
-    on_exit = function(_, code)
+    on_exit = function(self_id, code)
+      jobs.untrack(self_id)
       if code ~= 0 then
         local message = "pydeps: command failed"
         if #stderr > 0 then
@@ -264,7 +267,10 @@ function M.run_command(cmd, opts)
 
   if job_id <= 0 then
     vim.notify("pydeps: failed to start command: " .. table.concat(cmd, " "), vim.log.levels.ERROR)
+    return
   end
+
+  jobs.track(job_id)
 end
 
 return M
