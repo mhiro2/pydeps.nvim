@@ -1,4 +1,5 @@
 local backoff = require("pydeps.providers.pypi.backoff")
+local jobs = require("pydeps.core.jobs")
 local shared = require("pydeps.providers.pypi.shared")
 local util = require("pydeps.util")
 
@@ -98,7 +99,8 @@ function M.new(opts)
           vim.list_extend(stderr, data)
         end
       end,
-      on_exit = function(_, code, _)
+      on_exit = function(self_id, code, _)
+        jobs.untrack(self_id)
         local payload = table.concat(stdout, "\n")
         local err = table.concat(stderr, "\n")
         local decoded = nil
@@ -110,6 +112,7 @@ function M.new(opts)
     })
 
     if job_id > 0 then
+      jobs.track(job_id)
       timers[normalized] = uv.new_timer()
       timers[normalized]:start(shared.REQUEST_TIMEOUT, 0, function()
         if completed then
@@ -184,7 +187,7 @@ function M.new(opts)
     end
 
     if vim.fn.executable("curl") == 1 then
-      run_request({ "curl", "-fsSL", url }, normalized)
+      run_request({ "curl", "--connect-timeout", "3", "--max-time", "8", "-fsSL", url }, normalized)
       return
     end
 

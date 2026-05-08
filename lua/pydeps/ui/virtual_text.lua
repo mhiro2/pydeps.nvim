@@ -1,5 +1,6 @@
 local config = require("pydeps.config")
 local env = require("pydeps.core.env")
+local jobs = require("pydeps.core.jobs")
 local project = require("pydeps.core.project")
 local dependency_view = require("pydeps.ui.dependency_view")
 local ui_shared = require("pydeps.ui.shared")
@@ -412,8 +413,19 @@ end
 ---@param opts? PyDepsRenderOptions
 ---@return nil
 local function queue_pypi_request(bufnr, package_name, deps, resolved, opts)
+  if jobs.is_stopping() then
+    return
+  end
   pending[package_name] = "searching"
   limiter:enqueue(function(done)
+    -- The limiter may dispatch this callback after VimLeavePre fired
+    -- (e.g. when a stopped job's on_exit released a slot). Skip the actual
+    -- fetch in that case so we don't re-spawn curl during shutdown.
+    if jobs.is_stopping() then
+      pending[package_name] = nil
+      done()
+      return
+    end
     pending[package_name] = "loading"
     pypi.get(package_name, function()
       pending[package_name] = nil
@@ -441,14 +453,24 @@ end
 ---@param resolved PyDepsResolved
 ---@param current_env PyDepsEnv
 ---@param lockfile_missing boolean
+---@param skip_fetch boolean
 ---@return table[]
-local function build_dependency_views(bufnr, deps, root, resolved, current_env, lockfile_missing, lockfile_loading)
+local function build_dependency_views(
+  bufnr,
+  deps,
+  root,
+  resolved,
+  current_env,
+  lockfile_missing,
+  lockfile_loading,
+  skip_fetch
+)
   local views = {}
   local line_cache = {}
 
   for _, dep in ipairs(deps or {}) do
     -- Queue PyPI request if needed
-    if ok_pypi and not pypi.get_cached(dep.name) and not pending[dep.name] then
+    if not skip_fetch and ok_pypi and not pypi.get_cached(dep.name) and not pending[dep.name] then
       queue_pypi_request(bufnr, dep.name, deps, resolved, { lockfile_missing = lockfile_missing })
     end
 
@@ -489,9 +511,11 @@ function M.render(bufnr, deps, resolved, opts)
   local current_env = env.get(root)
   local lockfile_missing = opts and opts.lockfile_missing or false
   local lockfile_loading = opts and opts.lockfile_loading or false
+  local skip_fetch = opts and opts.skip_fetch or false
 
   -- Build all dependency views
-  local views = build_dependency_views(bufnr, deps, root, resolved, current_env, lockfile_missing, lockfile_loading)
+  local views =
+    build_dependency_views(bufnr, deps, root, resolved, current_env, lockfile_missing, lockfile_loading, skip_fetch)
 
   -- Calculate badge positions
   local ranges = get_treesitter_ranges(bufnr)

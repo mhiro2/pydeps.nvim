@@ -1,6 +1,7 @@
 local buffer_context = require("pydeps.core.buffer_context")
 local cache = require("pydeps.core.cache")
 local config = require("pydeps.config")
+local jobs = require("pydeps.core.jobs")
 local project = require("pydeps.core.project")
 local diagnostics = require("pydeps.ui.diagnostics")
 local info = require("pydeps.ui.info")
@@ -134,12 +135,22 @@ local function ensure_autocmds()
       M.refresh_all()
     end,
   })
-  vim.api.nvim_create_autocmd({ "BufReadPost", "BufWritePost" }, {
+  vim.api.nvim_create_autocmd("BufReadPost", {
     group = augroup_id,
     pattern = "pyproject.toml",
     callback = function(args)
       cache.invalidate_pyproject(args.buf)
       M.refresh(args.buf)
+    end,
+  })
+  -- On save: re-render from cached PyPI/env data only. Spawning new curl jobs
+  -- here makes :wq wait for them to finish, hanging Neovim on exit.
+  vim.api.nvim_create_autocmd("BufWritePost", {
+    group = augroup_id,
+    pattern = "pyproject.toml",
+    callback = function(args)
+      cache.invalidate_pyproject(args.buf)
+      M.refresh(args.buf, { skip_fetch = true })
     end,
   })
   vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
@@ -210,6 +221,14 @@ local function ensure_autocmds()
       end
     end,
   })
+  -- Stop in-flight curl/python/uv jobs so :q doesn't wait for them
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    group = augroup_id,
+    callback = function()
+      clear_all_timers()
+      jobs.stop_all()
+    end,
+  })
 end
 
 ---@param bufnr integer
@@ -240,7 +259,8 @@ local function handle_missing_lockfile(root, missing)
 end
 
 ---@param bufnr? integer
-function M.refresh(bufnr)
+---@param opts? { skip_fetch?: boolean }
+function M.refresh(bufnr, opts)
   bufnr = buffer_context.current_buf(bufnr)
   if not buffer_context.is_pyproject_buf(bufnr) then
     return
@@ -263,14 +283,18 @@ function M.refresh(bufnr)
   -- Notify about missing lockfile (once per root)
   handle_missing_lockfile(root, missing_lockfile)
 
+  local skip_fetch = opts and opts.skip_fetch or false
+
   -- Render UI
   virtual_text.render(bufnr, deps, resolved, {
     lockfile_missing = missing_lockfile,
     lockfile_loading = lockfile_loading,
+    skip_fetch = skip_fetch,
   })
   diagnostics.render(bufnr, deps, resolved, {
     lockfile_missing = missing_lockfile,
     lockfile_loading = lockfile_loading,
+    skip_fetch = skip_fetch,
   })
 end
 

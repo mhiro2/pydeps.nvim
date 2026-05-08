@@ -12,6 +12,7 @@
 ---@field cmd string[]
 ---@field cwd? string
 
+local jobs = require("pydeps.core.jobs")
 local util = require("pydeps.util")
 
 local M = {}
@@ -81,7 +82,8 @@ function M.resolve(opts)
         stderr = data
       end
     end,
-    on_exit = function(_, code, _)
+    on_exit = function(self_id, code, _)
+      jobs.untrack(self_id)
       if code ~= 0 then
         local err_msg = table.concat(stderr or {}, "\n"):gsub("^%s*(.-)%s*$", "%1")
         finish({
@@ -104,6 +106,8 @@ function M.resolve(opts)
     })
     return
   end
+
+  jobs.track(job_id)
 
   -- Set up timeout timer
   timer = uv.new_timer()

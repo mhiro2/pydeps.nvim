@@ -21,6 +21,7 @@
 ---@field vulnerabilities PyDepsOSVVulnerability[]
 
 local config = require("pydeps.config")
+local jobs = require("pydeps.core.jobs")
 local util = require("pydeps.util")
 
 local M = {}
@@ -323,6 +324,10 @@ local function build_request_cmd(payload)
   if vim.fn.executable("curl") == 1 then
     return {
       "curl",
+      "--connect-timeout",
+      "3",
+      "--max-time",
+      "12",
       "-fsSL",
       "-X",
       "POST",
@@ -394,7 +399,8 @@ local function run_request(payload, cb)
         vim.list_extend(stderr, data)
       end
     end,
-    on_exit = function(_, code)
+    on_exit = function(self_id, code)
+      jobs.untrack(self_id)
       local payload_out = table.concat(stdout, "\n")
       if code ~= 0 then
         local err_out = util.trim(table.concat(stderr, "\n"))
@@ -417,6 +423,8 @@ local function run_request(payload, cb)
     finish(nil, "failed to start OSV request")
     return
   end
+
+  jobs.track(job_id)
 
   timer = uv.new_timer()
   timer:start(REQUEST_TIMEOUT, 0, function()

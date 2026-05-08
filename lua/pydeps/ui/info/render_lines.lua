@@ -9,6 +9,7 @@ local M = {}
 ---@field lockfile_missing boolean
 ---@field lockfile_loading? boolean
 ---@field root? string
+---@field skip_fetch? boolean
 
 ---@class PyDepsStatusResult
 ---@field kind "ok"|"update"|"warn"|"error"|"inactive"|"unknown"

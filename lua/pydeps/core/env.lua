@@ -18,6 +18,7 @@
 ---@field value PyDepsEnv
 ---@field time number
 
+local jobs = require("pydeps.core.jobs")
 local util = require("pydeps.util")
 
 local M = {}
@@ -138,7 +139,8 @@ local function fetch_env_async(python, venv, key)
         stdout = data
       end
     end,
-    on_exit = function(_, code, _)
+    on_exit = function(self_id, code, _)
+      jobs.untrack(self_id)
       -- Clear timeout timer
       util.safe_close_timer(timers[key])
       timers[key] = nil
@@ -160,6 +162,7 @@ local function fetch_env_async(python, venv, key)
 
   -- Set up timeout timer
   if job_id > 0 then
+    jobs.track(job_id)
     timers[key] = uv.new_timer()
     timers[key]:start(REQUEST_TIMEOUT, 0, function()
       util.safe_close_timer(timers[key])

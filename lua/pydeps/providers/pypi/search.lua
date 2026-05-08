@@ -1,5 +1,6 @@
 local config = require("pydeps.config")
 local backoff = require("pydeps.providers.pypi.backoff")
+local jobs = require("pydeps.core.jobs")
 local shared = require("pydeps.providers.pypi.shared")
 local util = require("pydeps.util")
 
@@ -149,7 +150,8 @@ function M.new(opts)
           vim.list_extend(stderr, data)
         end
       end,
-      on_exit = function(_, code)
+      on_exit = function(self_id, code)
+        jobs.untrack(self_id)
         local err = util.trim(table.concat(stderr, "\n"))
         if code ~= 0 or err ~= "" then
           finish({}, true)
@@ -165,6 +167,10 @@ function M.new(opts)
         finish(parse_search_payload(payload), false)
       end,
     })
+
+    if job_id > 0 then
+      jobs.track(job_id)
+    end
 
     if job_id <= 0 then
       loading[query] = nil
@@ -203,7 +209,7 @@ function M.new(opts)
     end
 
     if vim.fn.executable("curl") == 1 then
-      run_request({ "curl", "-fsSL", url }, query)
+      run_request({ "curl", "--connect-timeout", "3", "--max-time", "8", "-fsSL", url }, query)
       return
     end
 

@@ -1,5 +1,6 @@
 local config = require("pydeps.config")
 local env = require("pydeps.core.env")
+local jobs = require("pydeps.core.jobs")
 local project = require("pydeps.core.project")
 local dependency_view = require("pydeps.ui.dependency_view")
 local ui_shared = require("pydeps.ui.shared")
@@ -67,6 +68,7 @@ local function compute_diagnostics(bufnr, deps, resolved, opts)
   local diagnostics = {}
   local lockfile_missing = opts and opts.lockfile_missing
   local lockfile_loading = opts and opts.lockfile_loading
+  local skip_fetch = opts and opts.skip_fetch or false
 
   if lockfile_loading then
     return diagnostics
@@ -139,9 +141,14 @@ local function compute_diagnostics(bufnr, deps, resolved, opts)
           diagnostics,
           make_diag(dep, "resolved version is yanked on PyPI", config.options.diagnostic_severity.yanked)
         )
-      elseif not view.meta and not pending[dep.name] then
+      elseif not skip_fetch and not jobs.is_stopping() and not view.meta and not pending[dep.name] then
         pending[dep.name] = true
         limiter:enqueue(function(done)
+          if jobs.is_stopping() then
+            pending[dep.name] = nil
+            done()
+            return
+          end
           pypi.get(dep.name, function()
             pending[dep.name] = nil
             done()
