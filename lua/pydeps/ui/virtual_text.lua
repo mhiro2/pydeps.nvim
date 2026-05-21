@@ -306,7 +306,15 @@ local function set_mark(bufnr, dep, col)
   if not chunks or #chunks == 0 then
     return
   end
-  vim.api.nvim_buf_set_extmark(bufnr, M.ns, dep.lnum, dep.col or 0, {
+  local lnum = dep.lnum
+  if not lnum or lnum < 0 or lnum >= vim.api.nvim_buf_line_count(bufnr) then
+    return
+  end
+  -- Clamp col to current line byte length: deps may have been parsed against
+  -- a previous buffer state that has since been edited.
+  local line_text = vim.api.nvim_buf_get_lines(bufnr, lnum, lnum + 1, false)[1] or ""
+  local safe_col = math.max(0, math.min(dep.col or 0, #line_text))
+  vim.api.nvim_buf_set_extmark(bufnr, M.ns, lnum, safe_col, {
     virt_text = chunks,
     virt_text_pos = "overlay",
     virt_text_win_col = col,

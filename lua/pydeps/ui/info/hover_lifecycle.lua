@@ -102,11 +102,15 @@ local function restore_keymap(map, bufnr)
     return
   end
 
+  -- vim.keymap.set defaults to non-recursive (`remap = false`). For a mapping
+  -- originally defined with recursion (`noremap = 0`), we have to opt in via
+  -- `remap = true` to preserve the original semantics on restore.
+  local noremap = normalize_bool(map.noremap)
   local opts = {
     buffer = bufnr,
     desc = map.desc,
     expr = normalize_bool(map.expr),
-    noremap = normalize_bool(map.noremap),
+    remap = noremap == false or nil,
     nowait = normalize_bool(map.nowait),
     script = normalize_bool(map.script),
     silent = normalize_bool(map.silent),
@@ -119,17 +123,19 @@ end
 ---@param bufnr integer
 ---@return vim.api.keyset.get_keymap?
 local function get_buffer_keymap(key, bufnr)
-  local ok, keymaps = pcall(vim.keymap.get, "n", key, { buffer = bufnr })
+  local ok, keymaps = pcall(vim.api.nvim_buf_get_keymap, bufnr, "n")
   if not ok or type(keymaps) ~= "table" then
     return nil
   end
 
-  if keymaps[1] then
-    return keymaps[1]
-  end
-
-  if keymaps.lhs then
-    return keymaps
+  -- nvim_buf_get_keymap reports `<CR>` as the termcode representation `\r`,
+  -- so normalise both sides via `nvim_replace_termcodes` before comparing.
+  local normalized_key = vim.api.nvim_replace_termcodes(key, true, true, true)
+  for _, map in ipairs(keymaps) do
+    local lhs = map.lhs and vim.api.nvim_replace_termcodes(map.lhs, true, true, true) or nil
+    if lhs == normalized_key then
+      return map
+    end
   end
 
   return nil
@@ -249,6 +255,7 @@ local function render_hover(dep, resolved, opts, source_buf, window_opts)
     root = opts.root,
     resolved_version = resolved,
     lockfile_missing = opts.lockfile_missing,
+    lockfile_loading = opts.lockfile_loading,
   })
   local lines = render_lines.build_lines(view, opts)
   local status = render_lines.determine_status(view)
@@ -281,6 +288,7 @@ local function render_hover(dep, resolved, opts, source_buf, window_opts)
       root = opts.root,
       resolved_version = resolved,
       lockfile_missing = opts.lockfile_missing,
+      lockfile_loading = opts.lockfile_loading,
       meta = meta,
     })
     local updated_lines = render_lines.build_lines(updated_view, opts)
