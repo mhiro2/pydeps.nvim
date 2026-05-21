@@ -336,6 +336,56 @@ T["pin not found shows message when version not on PyPI"] = function()
   MiniTest.expect.equality(string.find(text, "not on public PyPI") ~= nil, true)
 end
 
+T["render survives stale col after buffer edit"] = function()
+  local virtual_text = setup_virtual_text()
+  local pyproject = require("pydeps.sources.pyproject")
+
+  helpers.setup_buffer({
+    "[project]",
+    "dependencies = [",
+    '  "averyverylongpackage>=1.0.0",',
+    "]",
+  })
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.bo[bufnr].filetype = "toml"
+  local deps = pyproject.parse(nil, nil, bufnr)
+  local resolved = { averyverylongpackage = "1.0.0" }
+
+  -- Simulate user editing the dependency line to be much shorter than the
+  -- col positions captured during the original parse.
+  vim.api.nvim_buf_set_lines(bufnr, 2, 3, false, { "x" })
+
+  local ok, err = pcall(virtual_text.render, bufnr, deps, resolved, { lockfile_missing = false })
+  MiniTest.expect.equality(ok, true)
+  if not ok then
+    error(err)
+  end
+end
+
+T["render skips deps whose line was deleted"] = function()
+  local virtual_text = setup_virtual_text()
+  local pyproject = require("pydeps.sources.pyproject")
+
+  helpers.setup_buffer({
+    "[project]",
+    "dependencies = [",
+    '  "somepkg>=1.0.0",',
+    "]",
+  })
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.bo[bufnr].filetype = "toml"
+  local deps = pyproject.parse(nil, nil, bufnr)
+  local resolved = { somepkg = "1.0.0" }
+
+  -- Delete the dependency line entirely so dep.lnum is past buffer end.
+  vim.api.nvim_buf_set_lines(bufnr, 2, 3, false, {})
+
+  local ok = pcall(virtual_text.render, bufnr, deps, resolved, { lockfile_missing = false })
+  MiniTest.expect.equality(ok, true)
+end
+
 T["virtual_text: does not leak helper globals"] = function()
   stub_env()
   stub_pypi()
