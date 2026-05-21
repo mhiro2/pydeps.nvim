@@ -161,18 +161,20 @@ function M.setup_project_buffer(lines)
   local bufnr = vim.api.nvim_get_current_buf()
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
   vim.bo[bufnr].filetype = "toml"
+  -- buffer_context.is_pyproject_buf matches on the buffer name suffix, so
+  -- assign a unique path ending in `pyproject.toml` to make show_at_cursor
+  -- recognise the buffer.
+  if not vim.api.nvim_buf_get_name(bufnr):match("pyproject%.toml$") then
+    pcall(vim.api.nvim_buf_set_name, bufnr, vim.fn.tempname() .. "/pyproject.toml")
+  end
   vim.api.nvim_win_set_cursor(0, { 1, 0 })
 end
 
 ---@return integer?
 function M.find_hover_win()
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local cfg = vim.api.nvim_win_get_config(win)
-    if cfg.relative == "cursor" then
-      return win
-    end
-  end
-  return nil
+  -- Ask the info module directly so we never confuse an unrelated float for
+  -- the hover window.
+  return require("pydeps.ui.info").get_hover_win()
 end
 
 ---@return integer?

@@ -5,14 +5,10 @@ local info_helpers = require("tests.info_helpers")
 local T = helpers.create_test_set()
 
 local function hover_count()
-  local count = 0
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local cfg = vim.api.nvim_win_get_config(win)
-    if cfg.relative == "cursor" then
-      count = count + 1
-    end
+  if require("pydeps.ui.info").get_hover_win() then
+    return 1
   end
-  return count
+  return 0
 end
 
 local function setup_info()
