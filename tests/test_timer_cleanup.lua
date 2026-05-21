@@ -108,29 +108,54 @@ end
 
 -- Test pypi.lua timer cleanup on request timeout
 T["pypi: request timeout cleans up timer"] = function()
-  -- Reload pypi module to reset state
+  -- Reload modules to reset state.
   package.loaded["pydeps.providers.pypi"] = nil
+  package.loaded["pydeps.providers.pypi.metadata"] = nil
+  package.loaded["pydeps.providers.pypi.shared"] = nil
+
+  -- Shrink the timeout so the timer fires during the test rather than after
+  -- it returns, otherwise the uv timer leaks for ~10s into the next case.
+  local shared = require("pydeps.providers.pypi.shared")
+  local original_timeout = shared.REQUEST_TIMEOUT
+  shared.REQUEST_TIMEOUT = 50
+
+  -- Mock curl/jobstart so the request hangs deterministically. Without this,
+  -- a real curl on CI resolves before the timer fires.
+  local original_executable = vim.fn.executable
+  local original_jobstart = vim.fn.jobstart
+  local original_jobstop = vim.fn.jobstop
+  vim.fn.executable = function(cmd)
+    if cmd == "curl" then
+      return 1
+    end
+    return 0
+  end
+  vim.fn.jobstart = function()
+    return 1
+  end
+  vim.fn.jobstop = function()
+    return 1
+  end
+
   local pypi = require("pydeps.providers.pypi")
 
-  -- Mock curl to hang (simulate timeout)
-  -- Note: This test verifies that timeout timer is created and cleaned up
-  -- The actual timeout is 10 seconds, so we just verify the mechanism exists
-
-  local callback_called = false
-
-  -- Request that will timeout (using a non-existent package)
-  pypi.get("nonexistent-package-xyz-123", function(_)
-    callback_called = true
+  local timeout_callback_args
+  pypi.get("hanging-package", function(data)
+    timeout_callback_args = { data = data, called = true }
   end)
 
-  -- Wait a bit (not the full timeout)
-  vim.wait(100, function()
-    return false
-  end)
+  -- Wait for the 50ms timeout to fire and schedule the callback.
+  vim.wait(500, function()
+    return timeout_callback_args ~= nil
+  end, 10)
 
-  -- Timer should exist and be active
-  -- Actual timeout will happen after 10 seconds, but we're just testing the setup
-  MiniTest.expect.equality(callback_called, false)
+  MiniTest.expect.equality(timeout_callback_args ~= nil, true)
+  MiniTest.expect.equality(timeout_callback_args.data, nil)
+
+  shared.REQUEST_TIMEOUT = original_timeout
+  vim.fn.executable = original_executable
+  vim.fn.jobstart = original_jobstart
+  vim.fn.jobstop = original_jobstop
 end
 
 -- Test state.lua disable cleans up all timers

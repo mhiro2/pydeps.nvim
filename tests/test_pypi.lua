@@ -69,7 +69,15 @@ T["pypi get: requests valid package names"] = function()
 
   MiniTest.expect.equality(captured_cmd ~= nil, true)
   MiniTest.expect.equality(captured_cmd[1], "curl")
-  MiniTest.expect.equality(captured_cmd[3]:match("/valid%-name/json$") ~= nil, true)
+
+  local url_matched = false
+  for _, arg in ipairs(captured_cmd) do
+    if type(arg) == "string" and arg:match("/valid%-name/json$") then
+      url_matched = true
+      break
+    end
+  end
+  MiniTest.expect.equality(url_matched, true)
   MiniTest.expect.equality(callback_result.info.version, "1.2.3")
 
   vim.fn.executable = original_executable
