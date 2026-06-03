@@ -19,18 +19,21 @@ local function highlight(buf, lines)
     if label then
       local start_col = line:find(label, 1, true)
       if start_col then
-        vim.api.nvim_buf_add_highlight(buf, provenance_ns, "Identifier", idx - 1, start_col - 1, start_col - 1 + #label)
+        vim.api.nvim_buf_set_extmark(buf, provenance_ns, idx - 1, start_col - 1, {
+          end_col = start_col - 1 + #label,
+          hl_group = "Identifier",
+        })
       end
       if label == "Target" then
         local value_start = line:find(": ", 1, true)
         if value_start then
           local col = value_start + 2
-          vim.api.nvim_buf_add_highlight(buf, provenance_ns, "Title", idx - 1, col - 1, #line)
+          vim.api.nvim_buf_set_extmark(buf, provenance_ns, idx - 1, col - 1, { end_col = #line, hl_group = "Title" })
         end
       end
     end
     if line:match("^Press q or <Esc> to close") then
-      vim.api.nvim_buf_add_highlight(buf, provenance_ns, "Comment", idx - 1, 0, #line)
+      vim.api.nvim_buf_set_extmark(buf, provenance_ns, idx - 1, 0, { end_col = #line, hl_group = "Comment" })
     end
   end
 end
