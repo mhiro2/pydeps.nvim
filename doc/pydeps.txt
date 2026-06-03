@@ -262,6 +262,11 @@ completion                          (table)
         max_results = 30,        -- Maximum number of results
       }
 <
+    Note: pypi_search is best-effort. PyPI provides no official package-search
+    API, so pydeps scrapes the public /search/ HTML page. That markup is
+    unofficial and may change or be rate-limited at any time; when it fails,
+    completion degrades to locally known names and warns once per session.
+    Set pypi_search = false to disable the network search entirely.
                                                          *pydeps-config-behavior*
 auto_refresh                        (boolean, default: true)
     Automatically refresh on buffer read/write and text changes.
@@ -303,6 +308,9 @@ pydeps.nvim provides completion for:
 
 Completion types:~
   • Package names: Type package name → PyPI search suggestions (min 2 chars)
+    Best-effort: scraped from PyPI's unofficial /search/ page. On failure it
+    degrades to locally known names (lockfile, environment, names in the file)
+    and warns once per session. Disable with completion.pypi_search = false.
   • Versions: Type version constraint (>=, <, ~=, etc.) → PyPI release versions
   • Extras: Type [ inside package spec → available extras from PyPI metadata
     Example: somepackage[bcrypt,toml]

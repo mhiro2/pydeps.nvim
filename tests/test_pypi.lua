@@ -285,4 +285,95 @@ T["pypi search: retries after failure backoff"] = function()
   vim.fn.jobstart = original_jobstart
 end
 
+T["pypi search: warns once and degrades on failure"] = function()
+  package.loaded["pydeps.providers.pypi"] = nil
+  local pypi = require("pydeps.providers.pypi")
+
+  local original_executable = vim.fn.executable
+  local original_jobstart = vim.fn.jobstart
+  local original_notify = vim.notify
+  local notifications = {}
+  local results = nil
+
+  vim.fn.executable = function(cmd)
+    if cmd == "curl" then
+      return 1
+    end
+    return 0
+  end
+  vim.fn.jobstart = function(_, opts)
+    vim.schedule(function()
+      opts.on_stderr(nil, { "network error" })
+      opts.on_exit(nil, 1, nil)
+    end)
+    return 1
+  end
+  vim.notify = function(msg, level)
+    table.insert(notifications, { msg = msg, level = level })
+  end
+
+  pypi.search("req", function(res)
+    results = res
+  end)
+  vim.wait(200, function()
+    return results ~= nil
+  end, 10)
+
+  -- A failed search degrades to an empty result and warns exactly once.
+  MiniTest.expect.equality(vim.deep_equal(results, {}), true)
+  MiniTest.expect.equality(#notifications, 1)
+  MiniTest.expect.equality(notifications[1].msg:match("PyPI name search is unavailable") ~= nil, true)
+  MiniTest.expect.equality(notifications[1].level, vim.log.levels.WARN)
+
+  vim.fn.executable = original_executable
+  vim.fn.jobstart = original_jobstart
+  vim.notify = original_notify
+end
+
+T["pypi search: treats unparseable payload as failure"] = function()
+  package.loaded["pydeps.providers.pypi"] = nil
+  local pypi = require("pydeps.providers.pypi")
+
+  local original_executable = vim.fn.executable
+  local original_jobstart = vim.fn.jobstart
+  local original_notify = vim.notify
+  local notifications = {}
+  local results = nil
+
+  vim.fn.executable = function(cmd)
+    if cmd == "curl" then
+      return 1
+    end
+    return 0
+  end
+  vim.fn.jobstart = function(_, opts)
+    vim.schedule(function()
+      -- HTTP succeeded but the markup is unrecognized (e.g. PyPI layout change).
+      opts.on_stdout(nil, { "<html><body>no recognizable package markup</body></html>" })
+      opts.on_exit(nil, 0, nil)
+    end)
+    return 1
+  end
+  vim.notify = function(msg, level)
+    table.insert(notifications, { msg = msg, level = level })
+  end
+
+  pypi.search("req", function(res)
+    results = res
+  end)
+  vim.wait(200, function()
+    return results ~= nil
+  end, 10)
+
+  -- A successful fetch that parses to nothing is treated as a failure: it
+  -- degrades to an empty result and warns once instead of caching silence.
+  MiniTest.expect.equality(vim.deep_equal(results, {}), true)
+  MiniTest.expect.equality(#notifications, 1)
+  MiniTest.expect.equality(notifications[1].msg:match("PyPI name search is unavailable") ~= nil, true)
+
+  vim.fn.executable = original_executable
+  vim.fn.jobstart = original_jobstart
+  vim.notify = original_notify
+end
+
 return T
