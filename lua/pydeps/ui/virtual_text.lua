@@ -253,9 +253,9 @@ end
 ---@param anchor_col integer Display-based anchor column (max col_end in section)
 ---@param width integer Badge display width
 ---@param padding integer Section padding
----@param bufnr integer
+---@param win_w integer Window width (computed once per render)
 ---@return integer Display column position for badge
-local function calculate_badge_position(dep, anchor_col, width, padding, bufnr)
+local function calculate_badge_position(dep, anchor_col, width, padding, win_w)
   local min_start = math.max(dep.col_end_display or dep.col_end or 1, 0)
   local start = math.max(anchor_col + padding - 1, min_start)
 
@@ -269,9 +269,8 @@ local function calculate_badge_position(dep, anchor_col, width, padding, bufnr)
   end
 
   -- Clamp badge position to window width (prefer visibility over perfect alignment)
-  local ww = win_width(bufnr)
-  if ww and ww > 0 then
-    local max_start = math.max(0, ww - width)
+  if win_w and win_w > 0 then
+    local max_start = math.max(0, win_w - width)
     if start > max_start then
       start = max_start
     end
@@ -280,19 +279,35 @@ local function calculate_badge_position(dep, anchor_col, width, padding, bufnr)
   return math.max(start, min_start)
 end
 
+---Build the badge chunks for each view once so they can be reused by both
+---position calculation and extmark rendering (avoids building twice per dep).
+---@param views table[]
+---@return table<integer, table[]>
+local function build_badges(views)
+  local badges = {}
+  for idx, view in ipairs(views or {}) do
+    local chunks = build_badge(view)
+    if chunks and #chunks > 0 then
+      badges[idx] = chunks
+    end
+  end
+  return badges
+end
+
 ---@param deps table[]
----@param bufnr integer
+---@param badges table<integer, table[]>
+---@param win_w integer Window width (computed once per render)
 ---@param ranges? table<string, {start_line: integer, end_line: integer}>
 ---@return table<integer, integer?>
-local function calculate_positions(deps, bufnr, ranges)
+local function calculate_positions(deps, badges, win_w, ranges)
   local anchors = calculate_section_anchors(deps, ranges)
   local padding = section_padding()
   local positions = {}
   for idx, dep in ipairs(deps or {}) do
-    local chunks = build_badge(dep)
-    if chunks and #chunks > 0 then
+    local chunks = badges[idx]
+    if chunks then
       local width = badge_width(chunks)
-      positions[idx] = calculate_badge_position(dep, anchors[dep.group or ""] or 0, width, padding, bufnr)
+      positions[idx] = calculate_badge_position(dep, anchors[dep.group or ""] or 0, width, padding, win_w)
     end
   end
   return positions
@@ -300,12 +315,9 @@ end
 
 ---@param bufnr integer
 ---@param dep table
+---@param chunks table[] Pre-built badge chunks
 ---@param col integer
-local function set_mark(bufnr, dep, col)
-  local chunks = build_badge(dep)
-  if not chunks or #chunks == 0 then
-    return
-  end
+local function set_mark(bufnr, dep, chunks, col)
   local lnum = dep.lnum
   if not lnum or lnum < 0 or lnum >= vim.api.nvim_buf_line_count(bufnr) then
     return
@@ -492,13 +504,15 @@ end
 
 ---@param bufnr integer
 ---@param views table[]
+---@param badges table<integer, table[]>
 ---@param positions table<integer, integer?>
 ---@return nil
-local function render_badges(bufnr, views, positions)
+local function render_badges(bufnr, views, badges, positions)
   for i, view in ipairs(views) do
     local col = positions[i]
-    if col then
-      set_mark(bufnr, view, col)
+    local chunks = badges[i]
+    if col and chunks then
+      set_mark(bufnr, view, chunks, col)
     end
   end
 end
@@ -525,12 +539,16 @@ function M.render(bufnr, deps, resolved, opts)
   local views =
     build_dependency_views(bufnr, deps, root, resolved, current_env, lockfile_missing, lockfile_loading, skip_fetch)
 
-  -- Calculate badge positions
+  -- Build badge chunks once and reuse for both positioning and rendering
+  local badges = build_badges(views)
+
+  -- Calculate badge positions (window width looked up once per render)
   local ranges = get_treesitter_ranges(bufnr)
-  local positions = calculate_positions(views, bufnr, ranges)
+  local win_w = win_width(bufnr)
+  local positions = calculate_positions(views, badges, win_w, ranges)
 
   -- Render badges
-  render_badges(bufnr, views, positions)
+  render_badges(bufnr, views, badges, positions)
 end
 
 ---Clean up debounce state for a buffer (used by autocmd cleanup)
