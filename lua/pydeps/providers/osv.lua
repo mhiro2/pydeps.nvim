@@ -14,6 +14,7 @@
 ---@field time number
 ---@field failed? boolean
 ---@field retry_after? number
+---@field ttl? number
 
 ---@class PyDepsOSVPackageResult
 ---@field name string
@@ -22,6 +23,7 @@
 
 local config = require("pydeps.config")
 local jobs = require("pydeps.core.jobs")
+local rate_limit = require("pydeps.core.rate_limit")
 local util = require("pydeps.util")
 
 local M = {}
@@ -31,6 +33,9 @@ local uv = vim.uv
 local REQUEST_TIMEOUT = 15000
 local RETRY_BACKOFF_SECONDS = 60
 local OSV_BATCH_SIZE = 100
+-- Cap concurrent /v1/vulns/{id} hydration requests so a batch with many
+-- advisories does not burst dozens of simultaneous jobs at the OSV API.
+local HYDRATE_CONCURRENCY = 5
 
 ---@type table<string, PyDepsOSVCacheEntry>
 local cache = {}
@@ -83,7 +88,8 @@ local function cached_entry(name, version)
   if entry.failed and entry.retry_after and util.now() < entry.retry_after then
     return nil, true
   end
-  if not entry.failed and (util.now() - entry.time) > (config.options.osv_cache_ttl or 3600) then
+  local ttl = entry.ttl or config.options.osv_cache_ttl or 3600
+  if not entry.failed and (util.now() - entry.time) > ttl then
     cache[key] = nil
     return nil, false
   end
@@ -98,12 +104,15 @@ end
 ---@param version string
 ---@param vulnerabilities PyDepsOSVVulnerability[]?
 ---@param failed? boolean
+---@param degraded? boolean -- usable data but missing hydrated detail; expire soon to retry
 ---@return nil
-local function set_cache(name, version, vulnerabilities, failed)
+local function set_cache(name, version, vulnerabilities, failed, degraded)
   local entry = { data = vulnerabilities or {}, time = util.now() }
   if failed then
     entry.failed = true
     entry.retry_after = util.now() + RETRY_BACKOFF_SECONDS
+  elseif degraded then
+    entry.ttl = RETRY_BACKOFF_SECONDS
   end
   cache[cache_key(name, version)] = entry
 end
@@ -317,50 +326,82 @@ local function resolve_python()
   return nil
 end
 
----@param payload string
+---@return string
+local function querybatch_url()
+  return config.options.osv_url or "https://api.osv.dev/v1/querybatch"
+end
+
+---@param id string
+---@return string
+local function vuln_detail_url(id)
+  -- Derive the single-vuln endpoint from the batch query URL so a custom
+  -- osv_url keeps host/version in sync: .../v1/querybatch -> .../v1/vulns/{id}.
+  -- Tolerate a trailing slash or query string on the configured URL.
+  local base = querybatch_url()
+  base = base:gsub("%?.*$", "")
+  base = base:gsub("/+$", "")
+  base = base:gsub("/querybatch$", "")
+  return string.format("%s/vulns/%s", base, id)
+end
+
+---@param id any
+---@return boolean
+local function is_valid_vuln_id(id)
+  return type(id) == "string" and id:match("^[A-Za-z0-9._-]+$") ~= nil
+end
+
+---@class PyDepsOSVRequest
+---@field url string
+---@field method string
+---@field payload? string
+
+---@param request PyDepsOSVRequest
 ---@return string[]?, string?
-local function build_request_cmd(payload)
-  local url = config.options.osv_url or "https://api.osv.dev/v1/querybatch"
+local function build_request_cmd(request)
   if vim.fn.executable("curl") == 1 then
-    return {
+    local cmd = {
       "curl",
       "--connect-timeout",
       "3",
       "--max-time",
       "12",
       "-fsSL",
-      "-X",
-      "POST",
-      "-H",
-      "Content-Type: application/json",
-      "--data-binary",
-      payload,
-      url,
-    },
-      nil
+    }
+    if request.method == "POST" then
+      vim.list_extend(cmd, {
+        "-X",
+        "POST",
+        "-H",
+        "Content-Type: application/json",
+        "--data-binary",
+        request.payload or "",
+      })
+    end
+    table.insert(cmd, request.url)
+    return cmd, nil
   end
 
   local python = resolve_python()
   if python then
     local script = table.concat({
       "import sys,urllib.request",
-      "url=sys.argv[1]",
-      "payload=sys.argv[2].encode('utf-8')",
-      "req=urllib.request.Request(url,data=payload,headers={'Content-Type':'application/json'})",
+      "url,method,body=sys.argv[1],sys.argv[2],sys.argv[3]",
+      "data=body.encode('utf-8') if body else None",
+      "req=urllib.request.Request(url,data=data,method=method,headers={'Content-Type':'application/json'})",
       "with urllib.request.urlopen(req, timeout=15) as r:",
       "  print(r.read().decode('utf-8'))",
     }, "\n")
-    return { python, "-c", script, url, payload }, nil
+    return { python, "-c", script, request.url, request.method, request.payload or "" }, nil
   end
 
   return nil, "pydeps: curl/python not found; OSV audit disabled"
 end
 
----@param payload string
+---@param request PyDepsOSVRequest
 ---@param cb fun(decoded: table?, err: string?)
 ---@return nil
-local function run_request(payload, cb)
-  local cmd, cmd_err = build_request_cmd(payload)
+local function run_request(request, cb)
+  local cmd, cmd_err = build_request_cmd(request)
   if not cmd then
     vim.notify(cmd_err or "pydeps: OSV request failed", vim.log.levels.WARN)
     cb(nil, cmd_err)
@@ -465,30 +506,74 @@ end
 
 ---@param decoded table
 ---@param batch PyDepsAuditPackage[]
----@return table<string, PyDepsOSVVulnerability[]>?, string?
-local function parse_batch_results(decoded, batch)
+---@return table<string, table[]>?, string[]?, string?
+local function parse_batch_stubs(decoded, batch)
   if type(decoded.results) ~= "table" then
-    return nil, "invalid OSV response: 'results' field is missing"
+    return nil, nil, "invalid OSV response: 'results' field is missing"
   end
 
-  ---@type table<string, PyDepsOSVVulnerability[]>
-  local result_map = {}
+  -- querybatch only returns vulnerability stubs (id + modified) per package.
+  ---@type table<string, table[]>
+  local stubs_by_key = {}
+  local ids = {}
+  local seen = {}
   for index, package in ipairs(batch) do
     local row = decoded.results[index]
-    local vulnerabilities = {}
+    local stubs = {}
     if type(row) == "table" and type(row.vulns) == "table" then
-      for _, vulnerability in ipairs(row.vulns) do
-        if type(vulnerability) == "table" then
-          table.insert(vulnerabilities, normalize_vulnerability(vulnerability, package.name))
+      for _, stub in ipairs(row.vulns) do
+        if type(stub) == "table" and type(stub.id) == "string" and stub.id ~= "" then
+          table.insert(stubs, stub)
+          if not seen[stub.id] then
+            seen[stub.id] = true
+            table.insert(ids, stub.id)
+          end
         end
       end
     end
-    table.sort(vulnerabilities, vuln_sorter)
-    result_map[cache_key(package.name, package.version)] = vulnerabilities
-    set_cache(package.name, package.version, vulnerabilities, false)
+    stubs_by_key[cache_key(package.name, package.version)] = stubs
   end
 
-  return result_map, nil
+  return stubs_by_key, ids, nil
+end
+
+---Fetch full vulnerability records for the given ids via the vulns endpoint.
+---Best-effort: ids that fail to hydrate are simply absent from the result.
+---@param ids string[]
+---@param cb fun(details: table<string, table>)
+---@return nil
+local function hydrate_vulns(ids, cb)
+  ---@type table<string, table>
+  local details = {}
+  local remaining = #ids
+  if remaining == 0 then
+    cb(details)
+    return
+  end
+
+  local function on_done()
+    remaining = remaining - 1
+    if remaining == 0 then
+      cb(details)
+    end
+  end
+
+  local limiter = rate_limit.new(HYDRATE_CONCURRENCY)
+  for _, id in ipairs(ids) do
+    if is_valid_vuln_id(id) then
+      limiter:enqueue(function(done)
+        run_request({ url = vuln_detail_url(id), method = "GET" }, function(decoded, err)
+          if decoded and not err then
+            details[id] = decoded
+          end
+          done()
+          on_done()
+        end)
+      end)
+    else
+      on_done()
+    end
+  end
 end
 
 ---@param packages PyDepsAuditPackage[]
@@ -522,34 +607,56 @@ local function request_batch(batch, cb)
     })
   end
 
-  local ok, payload = pcall(vim.json.encode, { queries = queries })
-  if not ok then
+  local function fail(err)
     for _, package in ipairs(batch) do
       set_cache(package.name, package.version, nil, true)
     end
-    cb(nil, "failed to encode OSV query payload")
+    cb(nil, err)
+  end
+
+  local ok, payload = pcall(vim.json.encode, { queries = queries })
+  if not ok then
+    fail("failed to encode OSV query payload")
     return
   end
 
-  run_request(payload, function(decoded, request_err)
+  run_request({ url = querybatch_url(), method = "POST", payload = payload }, function(decoded, request_err)
     if request_err or not decoded then
-      for _, package in ipairs(batch) do
-        set_cache(package.name, package.version, nil, true)
-      end
-      cb(nil, request_err or "OSV request failed")
+      fail(request_err or "OSV request failed")
       return
     end
 
-    local result_map, parse_err = parse_batch_results(decoded, batch)
-    if parse_err or not result_map then
-      for _, package in ipairs(batch) do
-        set_cache(package.name, package.version, nil, true)
-      end
-      cb(nil, parse_err or "failed to parse OSV response")
+    local stubs_by_key, ids, parse_err = parse_batch_stubs(decoded, batch)
+    if parse_err or not stubs_by_key then
+      fail(parse_err or "failed to parse OSV response")
       return
     end
 
-    cb(result_map, nil)
+    -- querybatch returns ids only; hydrate them for severity/summary/fixed.
+    hydrate_vulns(ids, function(details)
+      ---@type table<string, PyDepsOSVVulnerability[]>
+      local result_map = {}
+      for _, package in ipairs(batch) do
+        local key = cache_key(package.name, package.version)
+        local vulnerabilities = {}
+        local degraded = false
+        for _, stub in ipairs(stubs_by_key[key] or {}) do
+          -- Fall back to the stub when hydration fails so the advisory still
+          -- surfaces (with UNKNOWN severity) instead of disappearing.
+          local detail = details[stub.id]
+          if not detail then
+            degraded = true
+          end
+          table.insert(vulnerabilities, normalize_vulnerability(detail or stub, package.name))
+        end
+        table.sort(vulnerabilities, vuln_sorter)
+        result_map[key] = vulnerabilities
+        -- Degraded entries (some detail missing) expire quickly so the next
+        -- audit retries hydration instead of serving stub data for the full TTL.
+        set_cache(package.name, package.version, vulnerabilities, false, degraded)
+      end
+      cb(result_map, nil)
+    end)
   end)
 end
 
