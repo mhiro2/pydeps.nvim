@@ -41,6 +41,14 @@ local function format_menu_lines(prompt, items)
   return lines
 end
 
+---@param winid integer
+---@return nil
+local function close_window(winid)
+  if vim.api.nvim_win_is_valid(winid) then
+    vim.api.nvim_win_close(winid, true)
+  end
+end
+
 ---Handle single keypress input
 ---@param winid integer
 ---@param items PyDepsSelectOption[]
@@ -53,15 +61,20 @@ local function handle_input(winid, items, callback)
       return
     end
 
-    local char = vim.fn.getchar()
+    -- getchar raises on interrupt (e.g. <C-c>); treat it as a cancel.
+    local ok, char = pcall(vim.fn.getchar)
+    if not ok then
+      close_window(winid)
+      callback(nil)
+      return
+    end
+
     local nr
 
     -- Convert char code to number
     if type(char) == "number" then
       if char == 27 or char == 113 then -- ESC or 'q'
-        if vim.api.nvim_win_is_valid(winid) then
-          vim.api.nvim_win_close(winid, true)
-        end
+        close_window(winid)
         callback(nil)
         return
       end
@@ -70,19 +83,14 @@ local function handle_input(winid, items, callback)
       end
     elseif type(char) == "string" then
       if char == "q" or char == "\27" then
-        if vim.api.nvim_win_is_valid(winid) then
-          vim.api.nvim_win_close(winid, true)
-        end
+        close_window(winid)
         callback(nil)
         return
       end
       nr = tonumber(char)
     end
 
-    -- Close window
-    if vim.api.nvim_win_is_valid(winid) then
-      vim.api.nvim_win_close(winid, true)
-    end
+    close_window(winid)
 
     -- Execute callback
     if nr and nr >= 1 and nr <= #items then
