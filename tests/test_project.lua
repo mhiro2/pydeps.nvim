@@ -104,4 +104,27 @@ T["clear_cache allows re-lookup after buffer name change"] = function()
   vim.fn.delete(dir_b, "rf")
 end
 
+T["find_root resolves symlinked paths to a canonical root"] = function()
+  local real_dir = vim.fn.resolve(vim.fn.tempname())
+  vim.fn.mkdir(real_dir, "p")
+  vim.fn.writefile({ "[project]" }, real_dir .. "/pyproject.toml")
+
+  -- A symlink pointing at the real project directory. A buffer opened through
+  -- the symlink must still report the canonical root so cache keys match the
+  -- ones derived from the real path.
+  local link_dir = vim.fn.tempname()
+  MiniTest.expect.no_equality(vim.uv.fs_symlink(real_dir, link_dir), nil)
+
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_name(bufnr, link_dir .. "/test.py")
+  project.clear_cache(bufnr)
+
+  MiniTest.expect.equality(project.find_root(bufnr), real_dir)
+
+  -- Cleanup
+  vim.api.nvim_buf_delete(bufnr, { force = true })
+  vim.uv.fs_unlink(link_dir)
+  vim.fn.delete(real_dir, "rf")
+end
+
 return T

@@ -109,6 +109,7 @@ end
 ---@param opts? { sync?: boolean }
 ---@return PyDepsLockfileData, boolean, boolean
 function M.get_lockfile(root, opts)
+  root = project.normalize_path(root)
   local path = project.find_file(root, "uv.lock")
   if not path then
     return { resolved = {}, packages = {}, graph = {} }, true, false
@@ -145,6 +146,7 @@ end
 
 ---@param root string
 function M.invalidate_lockfile(root)
+  root = project.normalize_path(root)
   local path = project.find_file(root, "uv.lock")
   if path then
     lock_cache[path] = nil
@@ -155,13 +157,13 @@ end
 ---@param root string
 ---@return PyDepsResolved?
 function M.get_lock_snapshot(root)
-  return lock_snapshots[root]
+  return lock_snapshots[project.normalize_path(root)]
 end
 
 ---@param root string
 ---@param resolved PyDepsResolved
 function M.set_lock_snapshot(root, resolved)
-  lock_snapshots[root] = resolved
+  lock_snapshots[project.normalize_path(root)] = resolved
 end
 
 return M

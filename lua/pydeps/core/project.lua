@@ -8,6 +8,20 @@ local uv = vim.uv
 ---@type table<integer, string|false>
 local buf_root_cache = {}
 
+--- Normalize a filesystem path into a canonical, stable cache key.
+--- Resolves symlinks via `fs_realpath` when the path exists (e.g. macOS
+--- /tmp -> /private/tmp), falling back to lexical normalization otherwise.
+--- This keeps cache keys consistent regardless of how a caller spelled the
+--- path (raw `tempname()` vs the symlink-resolved buffer name).
+---@param path string?
+---@return string?
+function M.normalize_path(path)
+  if not path or path == "" then
+    return path
+  end
+  return vim.fs.normalize(uv.fs_realpath(path) or path)
+end
+
 ---@param bufnr integer
 ---@return string?
 function M.find_root(bufnr)
@@ -25,7 +39,7 @@ function M.find_root(bufnr)
     return nil
   end
 
-  local root = vim.fs.dirname(match)
+  local root = M.normalize_path(vim.fs.dirname(match))
   buf_root_cache[bufnr] = root
   return root
 end
