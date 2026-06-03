@@ -95,6 +95,11 @@ function M.new(opts)
     table.insert(names, normalized)
   end
 
+  ---Best-effort scrape of PyPI's HTML search page. PyPI exposes no official
+  ---package-name search API (the legacy XML-RPC `search` was disabled), so this
+  ---parses unofficial markup (`package-snippet__name`, falling back to
+  ---`/project/<name>/` links) and may yield nothing if PyPI changes its layout.
+  ---An empty or failed result degrades to local completion names.
   ---@param payload string
   ---@return string[]
   local function parse_search_payload(payload)
@@ -134,6 +139,12 @@ function M.new(opts)
       timers[query] = nil
       loading[query] = nil
       set_cache(query, results, failed)
+      -- Make the degrade explicit: PyPI search is best-effort (unofficial
+      -- endpoint), so on failure notify once per session and fall back to
+      -- local completion names instead of failing silently.
+      if failed and opts.notify_once then
+        opts.notify_once("pydeps: PyPI name search is unavailable (unofficial endpoint); using local completion.")
+      end
       flush_callbacks(query, results)
     end
 
@@ -164,7 +175,12 @@ function M.new(opts)
           return
         end
 
-        finish(parse_search_payload(payload), false)
+        -- A successful fetch that parses to zero names almost always means the
+        -- unofficial HTML layout changed (a 2+ char prefix rarely has no match
+        -- on PyPI's fuzzy search), so treat it as a failure to surface the
+        -- breakage and degrade rather than caching a silent empty result.
+        local parsed = parse_search_payload(payload)
+        finish(parsed, #parsed == 0)
       end,
     })
 

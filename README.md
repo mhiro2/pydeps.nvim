@@ -208,6 +208,14 @@ It works with both **nvim-cmp** and **blink.cmp**.
 - `requests[security]>=2.31; python_version >= "3.11"`
 - `fastapi ~= 0.110`
 
+> [!NOTE]
+> Package-name suggestions are **best-effort**. PyPI provides no official
+> package-search API, so pydeps scrapes the public `/search/` page. That markup
+> is unofficial and may change or be rate-limited at any time; when it fails,
+> completion degrades to locally known names (lockfile, environment, and names
+> already in the file) and warns once per session. Set
+> `completion.pypi_search = false` to disable the network search entirely.
+
 ### nvim-cmp
 
 ```lua

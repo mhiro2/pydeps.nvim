@@ -88,6 +88,13 @@ function M.pypi_base_url()
   return base
 end
 
+---Build the PyPI search URL for a query.
+---
+---NOTE: PyPI exposes no official package-name search API (the legacy XML-RPC
+---`search` was disabled), so this targets the human-facing `/search/` HTML
+---page. It is therefore best-effort: the markup is unofficial and may change
+---or be rate-limited at any time. Callers degrade to local completion names on
+---failure. See the `completion.pypi_search` option to disable it entirely.
 ---@param query string
 ---@return string?
 function M.search_url(query)
