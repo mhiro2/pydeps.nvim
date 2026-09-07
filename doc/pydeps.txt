@@ -107,7 +107,9 @@ pydeps.setup({opts})                                           *pydeps.setup()*
       - If [package] is provided, updates that package.
       - If not on a dependency, prompts for a package name.
     The update is cancelled if the buffer changes while the metadata is
-    loading. Retry the command on the current contents.
+    loading. Retry the command on the current contents. The package name
+    prompt applies to the buffer that asked for the update, not to
+    whichever buffer is current when the name is entered.
 
 :PyDepsResolve                                                *:PyDepsResolve*
     Run `uv lock` to resolve dependencies. Shows a lockfile diff after
