@@ -7,6 +7,8 @@
 ---@field platform_release? string
 ---@field platform_version? string
 ---@field implementation_name? string
+---@field implementation_version? string
+---@field platform_python_implementation? string
 ---@field os_name? string
 ---@field python? string
 ---@field venv? string
@@ -117,6 +119,9 @@ local function fetch_env_async(python, venv, key)
   end
   local script = table.concat({
     "import json,sys,platform,os",
+    "v=sys.implementation.version",
+    "iv=f'{v.major}.{v.minor}.{v.micro}'",
+    "if v.releaselevel != 'final': iv += v.releaselevel[0] + str(v.serial)",
     "data={",
     "'python_version': f\"{sys.version_info.major}.{sys.version_info.minor}\",",
     "'python_full_version': platform.python_version(),",
@@ -125,7 +130,9 @@ local function fetch_env_async(python, venv, key)
     "'platform_machine': platform.machine(),",
     "'platform_release': platform.release(),",
     "'platform_version': platform.version(),",
-    "'implementation_name': platform.python_implementation().lower(),",
+    "'implementation_name': sys.implementation.name,",
+    "'implementation_version': iv,",
+    "'platform_python_implementation': platform.python_implementation(),",
     "'os_name': os.name,",
     "}",
     "print(json.dumps(data))",

@@ -5,6 +5,7 @@ local M = {}
 
 ---@class PyDepsUiStatusContext
 ---@field active boolean?
+---@field marker_status? "invalid"|"unknown"|"pending"
 ---@field yanked boolean?
 ---@field spec string?
 ---@field meta? PyDepsPyPIMeta
@@ -46,19 +47,23 @@ end
 
 ---@param dep PyDepsDependency
 ---@param current_env? PyDepsEnv
----@return boolean
+---@return boolean?
+---@return "invalid"|"unknown"|"pending"?
 function M.is_active(dep, current_env)
   local marker = ui_shared.extract_marker(dep.spec)
   if not marker then
     return true
   end
-  local marker_result = markers.evaluate(marker, ui_shared.with_extra_env(current_env, dep))
-  return marker_result ~= false
+  return markers.evaluate(marker, ui_shared.with_extra_env(current_env, dep))
 end
 
 ---@param context PyDepsUiStatusContext
 ---@return PyDepsUiStatusResult
 function M.classify(context)
+  if context.marker_status then
+    return { class = "unknown" }
+  end
+
   if context.active == false then
     return { class = "inactive" }
   end

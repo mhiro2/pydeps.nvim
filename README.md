@@ -35,7 +35,7 @@ pydeps.nvim answers:
 
 Key differences:
 - **Lockfile-first**: Shows what WILL be installed, not what COULD be installed
-- **Environment-aware**: Full PEP 508 marker evaluation (Python version, platform, extras, groups)
+- **Environment-aware**: PEP 508 marker evaluation with PEP 440 version comparisons (Python version, platform, extras, groups)
 - **Modern tooling**: Deep integration with `uv` instead of generic pip/requirements
 - **Editor-native workflow**: Review lockfile changes before committing
 
@@ -52,6 +52,13 @@ pydeps.nvim brings the **crates.nvim workflow to Python** with a focus on what w
 - ⚡ **Review-first resolve**: `uv lock` + lockfile diff before committing
 - 🧰 **Mismatch detection**: pin vs resolved version + yanked checks on PyPI
 - 🔐 **Security audit**: lockfile-wide vulnerability scan via OSV
+
+Marker comparisons preserve case and use substring membership for string fields.
+Version fields support PEP 440 ordering, compatible releases (`~=`), wildcards, and
+arbitrary equality (`===`). Invalid markers and unknown fields are reported; missing
+environment values remain pending. `group` and `dependency_group` are pydeps
+extensions. Lock marker sets (`extras`, `dependency_groups`) require an explicit
+evaluation context.
 
 ### Optional
 

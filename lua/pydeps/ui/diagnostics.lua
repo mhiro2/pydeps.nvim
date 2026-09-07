@@ -86,7 +86,9 @@ local function compute_diagnostics(bufnr, deps, resolved, opts)
     local active = view.active
     local resolved_version = view.resolved
 
-    if marker and not active and resolved_version then
+    if view.marker_status == "invalid" or view.marker_status == "unknown" then
+      table.insert(diagnostics, make_diag(dep, view.status_text, config.options.diagnostic_severity.marker))
+    elseif marker and active == false and resolved_version then
       table.insert(
         diagnostics,
         make_diag(
