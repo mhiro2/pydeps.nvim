@@ -67,6 +67,13 @@ T["membership is case sensitive substring matching or normalized set membership"
     { "'dev.test' in extras", true },
     { "'dev' in extras", false },
     { "'test' not in dependency_groups", false },
+    { "python_version in '3.9 3.11'", true },
+    { "python_version in '3.9 3.10'", false },
+    { "python_version not in '3.9 3.10'", true },
+    { "'3.11' in python_version", true },
+    { "python_full_version in '3.11.2 3.12.0'", true },
+    { "implementation_version in '3.10.0'", false },
+    { "platform_release in '14.5.0 15.0.0'", true },
   }
   for _, case in ipairs(cases) do
     MiniTest.expect.equality({ markers.evaluate(case[1], env) }, { case[2] })
@@ -113,7 +120,6 @@ T["parser rejects incomplete input unsupported tokens and unknown fields"] = fun
     "python_version ~= '3'",
     "python_version >= 'not-a-version'",
     "sys_platform ~= 'linux'",
-    "python_version in '3.11'",
     "extras == 'docs'",
     "extras in 'docs'",
   }) do

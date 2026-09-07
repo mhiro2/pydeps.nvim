@@ -221,9 +221,8 @@ local function evaluate(node, env)
     left, right = normalize_extra(left), normalize_extra(right)
   end
   if op == "in" or op == "not in" then
-    if field == "version" then
-      return nil, "invalid"
-    end
+    -- Membership is substring containment for every field, including version
+    -- fields: 'python_version in "3.9 3.10"' lists releases, it does not order them.
     local found = right:find(left, 1, true) ~= nil
     if op == "not in" then
       return not found
