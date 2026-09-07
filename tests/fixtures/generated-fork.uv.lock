@@ -1,0 +1,65 @@
+version = 1
+revision = 3
+requires-python = ">=3.10"
+resolution-markers = [
+    "sys_platform == 'linux'",
+    "sys_platform != 'linux'",
+]
+
+[options]
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer-span = "P1W"
+
+[[package]]
+name = "child"
+version = "1.0"
+source = { directory = "child" }
+
+[[package]]
+name = "demo"
+version = "1.0"
+source = { directory = "demo1" }
+resolution-markers = [
+    "sys_platform == 'linux'",
+]
+
+[package.optional-dependencies]
+speed = [
+    { name = "child" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "child", marker = "extra == 'speed'", directory = "child" }]
+provides-extras = ["speed"]
+
+[[package]]
+name = "demo"
+version = "2.0"
+source = { directory = "demo2" }
+resolution-markers = [
+    "sys_platform != 'linux'",
+]
+
+[package.optional-dependencies]
+speed = [
+    { name = "child" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "child", marker = "extra == 'speed'", directory = "child" }]
+provides-extras = ["speed"]
+
+[[package]]
+name = "fork-app"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "demo", version = "1.0", source = { directory = "demo1" }, extra = ["speed"], marker = "sys_platform == 'linux'" },
+    { name = "demo", version = "2.0", source = { directory = "demo2" }, extra = ["speed"], marker = "sys_platform != 'linux'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "demo", extras = ["speed"], marker = "sys_platform != 'linux'", directory = "demo2" },
+    { name = "demo", extras = ["speed"], marker = "sys_platform == 'linux'", directory = "demo1" },
+]

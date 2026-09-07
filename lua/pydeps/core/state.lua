@@ -1,3 +1,4 @@
+local lockfile = require("pydeps.sources.lockfile")
 local buffer_context = require("pydeps.core.buffer_context")
 local cache = require("pydeps.core.cache")
 local config = require("pydeps.config")
@@ -278,7 +279,8 @@ function M.refresh(bufnr, opts)
   -- Get dependency data
   local deps = buffer_context.get_deps(bufnr)
   local lock_data, missing_lockfile, lockfile_loading = cache.get_lockfile(root)
-  local resolved = lock_data.resolved or {}
+  local projection = lockfile.project(lock_data, require("pydeps.core.env").get(root))
+  local resolved = projection.resolved
 
   -- Notify about missing lockfile (once per root)
   handle_missing_lockfile(root, missing_lockfile)
@@ -289,11 +291,13 @@ function M.refresh(bufnr, opts)
   virtual_text.render(bufnr, deps, resolved, {
     lockfile_missing = missing_lockfile,
     lockfile_loading = lockfile_loading,
+    lockfile_ambiguous = projection.ambiguous,
     skip_fetch = skip_fetch,
   })
   diagnostics.render(bufnr, deps, resolved, {
     lockfile_missing = missing_lockfile,
     lockfile_loading = lockfile_loading,
+    lockfile_ambiguous = projection.ambiguous,
     skip_fetch = skip_fetch,
   })
 end

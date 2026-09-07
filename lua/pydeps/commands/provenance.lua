@@ -42,7 +42,8 @@ function M.run(target)
     return
   end
 
-  local ok, err = provenance_ui.show(dep.name, deps, lock_data.graph or {})
+  local projection = require("pydeps.sources.lockfile").project(lock_data, require("pydeps.core.env").get(root))
+  local ok, err = provenance_ui.show(dep.name, deps, projection.graph)
   if not ok then
     vim.notify(string.format("pydeps: failed to show provenance: %s", err or "unknown error"), vim.log.levels.ERROR)
   end

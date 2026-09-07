@@ -66,7 +66,6 @@ local function schedule_lockfile_parse(root, path)
   lockfile.parse_async(path, function(data)
     lock_pending[path] = nil
     if data then
-      data.graph = lockfile.build_graph(data.packages)
       local stat = uv.fs_stat(path)
       local mtime, size = stat_key(stat)
       lock_cache[path] = { mtime = mtime or 0, size = size or 0, data = data }
@@ -129,7 +128,6 @@ function M.get_lockfile(root, opts)
 
   if opts and opts.sync then
     local data = lockfile.parse_full(path)
-    data.graph = lockfile.build_graph(data.packages)
     lock_cache[path] = { mtime = mtime or 0, size = size or 0, data = data }
     return data, false, false
   end

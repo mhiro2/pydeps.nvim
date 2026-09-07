@@ -41,6 +41,13 @@ Key Features:
   • PyPI-aware dependency info and diagnostics
   • Completion for packages, versions, extras, and groups
 
+Universal lockfiles preserve every name/version/source identity and their
+conditional edges. Inline versions are projected with the detected
+environment's markers; ambiguous forks stay unresolved. This is a view of a
+resolution, not of the installed environment, and the audit covers all locked
+versions. Optional provenance edges require their extra or group to be
+selected.
+
 Supported Files:
   • pyproject.toml
   • uv.lock
@@ -138,7 +145,8 @@ pydeps.setup({opts})                                           *pydeps.setup()*
       • group/extra: Dependency group or extra (if present)
 
 :PyDepsAudit                                                    *:PyDepsAudit*
-    Audit all resolved dependencies in uv.lock against OSV.
+    Audit every distinct name/version in the universal uv.lock against OSV,
+    including forks for other platforms. Duplicate sources are queried once.
     Failed and unscanned packages are listed separately and are never
     counted as clean scans. A failed request retains its error during the
     60-second retry backoff.

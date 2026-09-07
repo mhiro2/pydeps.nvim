@@ -1,3 +1,4 @@
+local lockfile = require("pydeps.sources.lockfile")
 local buffer_context = require("pydeps.core.buffer_context")
 local cache = require("pydeps.core.cache")
 local info = require("pydeps.ui.info")
@@ -21,7 +22,7 @@ function M.run()
 
   if root then
     local lock_data, missing, loading = cache.get_lockfile(root)
-    resolved = lock_data.resolved or {}
+    resolved = lockfile.project(lock_data, require("pydeps.core.env").get(root)).resolved
     missing_lockfile = missing
     lockfile_loading = loading
     if loading then

@@ -235,6 +235,27 @@ T["audit collects lockfile packages and renders result"] = function()
   package.loaded["pydeps.ui.security_audit"] = original_security_audit
 end
 
+T["audit includes every universal version and deduplicates sources"] = function()
+  local original_osv = package.loaded["pydeps.providers.osv"]
+  local captured
+  package.loaded["pydeps.providers.osv"] = {
+    audit = function(packages)
+      captured = packages
+    end,
+  }
+  local dir = create_project({ "[project]", 'dependencies = ["demo"]' })
+  vim.fn.writefile(vim.fn.readfile("tests/fixtures/fork.uv.lock"), dir .. "/uv.lock")
+  require("pydeps.core.cache").invalidate_lockfile(dir)
+  require("pydeps.commands").audit()
+  local found = {}
+  for _, pkg in ipairs(captured or {}) do
+    found[#found + 1] = pkg.name .. "@" .. pkg.version
+  end
+  MiniTest.expect.equality(found, { "app@0.1.0", "child@3.0", "demo@1.0", "demo@2.0", "same@1.0", "tester@1.0" })
+  cleanup(dir)
+  package.loaded["pydeps.providers.osv"] = original_osv
+end
+
 T["audit warns when uv.lock is missing"] = function()
   local original_commands = package.loaded["pydeps.commands"]
   package.loaded["pydeps.commands"] = nil
