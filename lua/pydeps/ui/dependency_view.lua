@@ -161,9 +161,7 @@ function M.build(dep, opts)
 
   local status_kind, status_text, status_icon, lock_status, show_latest_warning =
     summarize_status(classified.class, resolved)
-  if marker_status then
-    status_text = ({ invalid = "invalid marker", unknown = "unknown marker field", pending = "environment pending" })[marker_status]
-  end
+  status_text = ({ invalid = "invalid marker", unknown = "unknown marker field" })[marker_status] or status_text
 
   return {
     dep = dep,

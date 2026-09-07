@@ -60,7 +60,9 @@ end
 ---@param context PyDepsUiStatusContext
 ---@return PyDepsUiStatusResult
 function M.classify(context)
-  if context.marker_status then
+  -- A broken marker says nothing about the package, but a pending environment
+  -- only delays the marker: keep reporting the version the lockfile already has.
+  if context.marker_status == "invalid" or context.marker_status == "unknown" then
     return { class = "unknown" }
   end
 

@@ -30,10 +30,11 @@ Key Features:
   • Environment-aware dependency evaluation (PEP 508 markers)
     Version fields use PEP 440 specifiers, including ~=, ===, and wildcards.
     Comparisons preserve case, and in/not in are substring membership on
-    every field. Invalid markers and unknown fields are reported;
-    unavailable environment values remain pending. group/dependency_group
-    are pydeps extensions. extras and dependency_groups require an explicit
-    lock marker evaluation context.
+    every field. Invalid markers and unknown fields are reported and drop
+    the dependency to an unknown state; while the environment is still
+    being read the marker stays pending and the locked version is still
+    shown. group/dependency_group are pydeps extensions. extras and
+    dependency_groups require an explicit lock marker evaluation context.
   • Direct integration with uv (lock, tree)
   • Dependency tree inspection ("why is this installed?")
   • Lockfile diff view (before/after resolve)

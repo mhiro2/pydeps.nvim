@@ -56,8 +56,9 @@ pydeps.nvim brings the **crates.nvim workflow to Python** with a focus on what w
 Marker comparisons preserve case, and `in`/`not in` are substring membership on every
 field. Ordering comparisons on version fields support PEP 440 ordering, compatible
 releases (`~=`), wildcards, and arbitrary equality (`===`). Invalid markers and unknown
-fields are reported; missing environment values remain pending. `group` and
-`dependency_group` are pydeps extensions. Lock marker sets (`extras`,
+fields are reported and drop the dependency to an unknown state; while the environment
+is still being read the marker stays pending and the locked version is still shown.
+`group` and `dependency_group` are pydeps extensions. Lock marker sets (`extras`,
 `dependency_groups`) require an explicit evaluation context.
 
 ### Optional
