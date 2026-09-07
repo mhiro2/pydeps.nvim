@@ -254,6 +254,8 @@ require("blink.cmp").setup({
 - `:PyDepsWhy [package]` — show transitive provenance for dependency
 - `:PyDepsInfo` — inspect dependency under cursor
 - `:PyDepsAudit` — audit `uv.lock` dependencies against OSV vulnerabilities
+  - Failed and unscanned packages are listed separately, never counted as clean scans
+  - A failed request retains its error during the 60-second retry backoff
 - `:PyDepsTree` — show dependency tree (uses `--frozen` by default)
   - `:PyDepsTree --resolve` skips frozen mode and attempts dependency resolution
 

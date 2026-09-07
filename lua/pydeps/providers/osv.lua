@@ -13,6 +13,7 @@
 ---@field data PyDepsOSVVulnerability[]
 ---@field time number
 ---@field failed? boolean
+---@field error? string
 ---@field retry_after? number
 ---@field ttl? number
 
@@ -20,6 +21,8 @@
 ---@field name string
 ---@field version string
 ---@field vulnerabilities PyDepsOSVVulnerability[]
+---@field status "clean"|"vulnerable"|"failed"|"not_scanned"
+---@field error? string
 
 local config = require("pydeps.config")
 local jobs = require("pydeps.core.jobs")
@@ -78,7 +81,7 @@ end
 
 ---@param name string
 ---@param version string
----@return PyDepsOSVVulnerability[]?, boolean
+---@return PyDepsOSVVulnerability[]?, boolean, string?
 local function cached_entry(name, version)
   local key = cache_key(name, version)
   local entry = cache[key]
@@ -86,7 +89,7 @@ local function cached_entry(name, version)
     return nil, false
   end
   if entry.failed and entry.retry_after and util.now() < entry.retry_after then
-    return nil, true
+    return nil, true, entry.error
   end
   local ttl = entry.ttl or config.options.osv_cache_ttl or 3600
   if not entry.failed and (util.now() - entry.time) > ttl then
@@ -106,10 +109,11 @@ end
 ---@param failed? boolean
 ---@param degraded? boolean -- usable data but missing hydrated detail; expire soon to retry
 ---@return nil
-local function set_cache(name, version, vulnerabilities, failed, degraded)
+local function set_cache(name, version, vulnerabilities, failed, degraded, err)
   local entry = { data = vulnerabilities or {}, time = util.now() }
   if failed then
     entry.failed = true
+    entry.error = err
     entry.retry_after = util.now() + RETRY_BACKOFF_SECONDS
   elseif degraded then
     entry.ttl = RETRY_BACKOFF_SECONDS
@@ -508,8 +512,8 @@ end
 ---@param batch PyDepsAuditPackage[]
 ---@return table<string, table[]>?, string[]?, string?
 local function parse_batch_stubs(decoded, batch)
-  if type(decoded.results) ~= "table" then
-    return nil, nil, "invalid OSV response: 'results' field is missing"
+  if type(decoded.results) ~= "table" or not vim.islist(decoded.results) or #decoded.results ~= #batch then
+    return nil, nil, "invalid OSV response: results must contain one row per package"
   end
 
   -- querybatch only returns vulnerability stubs (id + modified) per package.
@@ -519,10 +523,19 @@ local function parse_batch_stubs(decoded, batch)
   local seen = {}
   for index, package in ipairs(batch) do
     local row = decoded.results[index]
+    if type(row) ~= "table" or vim.islist(row) then
+      return nil, nil, "invalid OSV response: package row must be an object"
+    end
+    if row.vulns ~= nil and (type(row.vulns) ~= "table" or not vim.islist(row.vulns)) then
+      return nil, nil, "invalid OSV response: vulns must be an array"
+    end
     local stubs = {}
     if type(row) == "table" and type(row.vulns) == "table" then
       for _, stub in ipairs(row.vulns) do
-        if type(stub) == "table" and type(stub.id) == "string" and stub.id ~= "" then
+        if type(stub) ~= "table" or not is_valid_vuln_id(stub.id) then
+          return nil, nil, "invalid OSV response: vulnerability id is missing or invalid"
+        end
+        if type(stub) == "table" then
           table.insert(stubs, stub)
           if not seen[stub.id] then
             seen[stub.id] = true
@@ -609,7 +622,7 @@ local function request_batch(batch, cb)
 
   local function fail(err)
     for _, package in ipairs(batch) do
-      set_cache(package.name, package.version, nil, true)
+      set_cache(package.name, package.version, nil, true, false, err)
     end
     cb(nil, err)
   end
@@ -667,7 +680,13 @@ local function to_ordered_results(packages, result_map)
   local results = {}
   for _, package in ipairs(packages) do
     local key = cache_key(package.name, package.version)
+    local vulnerabilities = result_map[key]
+    local entry = cache[key]
+    local status = vulnerabilities and (#vulnerabilities > 0 and "vulnerable" or "clean")
+      or (entry and entry.failed and "failed" or "not_scanned")
     table.insert(results, {
+      status = status,
+      error = status == "failed" and entry.error or nil,
       name = package.name,
       version = package.version,
       vulnerabilities = result_map[key] or {},
@@ -702,21 +721,22 @@ function M.audit(packages, cb)
   ---@type table<string, PyDepsOSVVulnerability[]>
   local result_map = {}
   local pending = {}
+  local audit_error = nil
 
   for _, package in ipairs(normalized_packages) do
     local key = cache_key(package.name, package.version)
-    local cached, is_backoff = cached_entry(package.name, package.version)
+    local cached, is_backoff, cached_error = cached_entry(package.name, package.version)
     if cached then
       result_map[key] = cached
     elseif is_backoff then
-      result_map[key] = {}
+      audit_error = audit_error or cached_error or "OSV request is in backoff"
     else
       table.insert(pending, package)
     end
   end
 
   if #pending == 0 then
-    cb(to_ordered_results(normalized_packages, result_map), nil)
+    cb(to_ordered_results(normalized_packages, result_map), audit_error)
     return
   end
 
@@ -725,7 +745,7 @@ function M.audit(packages, cb)
 
   local function run_next_batch()
     if batch_index > #batches then
-      cb(to_ordered_results(normalized_packages, result_map), nil)
+      cb(to_ordered_results(normalized_packages, result_map), audit_error)
       return
     end
 
@@ -736,8 +756,7 @@ function M.audit(packages, cb)
         end
       end
       if err then
-        cb(to_ordered_results(normalized_packages, result_map), err)
-        return
+        audit_error = audit_error or err
       end
       batch_index = batch_index + 1
       run_next_batch()

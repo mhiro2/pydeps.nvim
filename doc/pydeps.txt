@@ -132,6 +132,9 @@ pydeps.setup({opts})                                           *pydeps.setup()*
 
 :PyDepsAudit                                                    *:PyDepsAudit*
     Audit all resolved dependencies in uv.lock against OSV.
+    Failed and unscanned packages are listed separately and are never
+    counted as clean scans. A failed request retains its error during the
+    60-second retry backoff.
     Opens a floating report window with:
       • scanned package count
       • vulnerable package count
