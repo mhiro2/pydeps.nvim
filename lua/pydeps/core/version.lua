@@ -59,7 +59,9 @@ local function parse(value)
     end
     result.local_parts = {}
     for part in local_part:gmatch("[^%._%-]+") do
-      table.insert(result.local_parts, tonumber(part) or part)
+      -- Only all-digit segments are numeric; tonumber would also accept the
+      -- alphanumeric '1e2' and '0x10', which PEP 440 compares as strings.
+      table.insert(result.local_parts, part:match("^%d+$") and tonumber(part) or part)
     end
     rest = ""
   end

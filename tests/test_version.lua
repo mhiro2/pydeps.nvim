@@ -44,6 +44,11 @@ T["PEP 440 specifiers distinguish comparison from simple ordering"] = function()
     { "1.0+local", ">", "1.0", false },
     { "1.0+local", "==", "1.0", true },
     { "1.0+1", "==", "1.0+01", true },
+    -- Local segments are integers only when every character is a digit.
+    { "1.0+1e2", "==", "1.0+100", false },
+    { "1.0+0x10", "==", "1.0+16", false },
+    { "1.0+1e2", "==", "1.0+1E2", true },
+    { "1.0+1e2", "!=", "1.0+100", true },
     { "1.0+local", "!=", "1.0", false },
     { "1.4.9", "~=", "1.4.5", true },
     { "1.5", "~=", "1.4.5", false },
