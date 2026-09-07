@@ -356,4 +356,48 @@ T["severity aggregation keeps highest recognized evaluation regardless of order"
   end
 end
 
+T["GitHub MODERATE advisories keep their level instead of degrading to unknown"] = function()
+  for _, case in ipairs({
+    { "MODERATE", "MODERATE" },
+    { "moderate", "MODERATE" },
+    { "CRITICAL", "CRITICAL" },
+    { "unrecognized", "UNKNOWN" },
+  }) do
+    require("pydeps.providers.osv")._clear_cache()
+    local _, restore = stub_requests({
+      { pattern = "querybatch$", body = '{"results":[{"vulns":[{"id":"TEST-1"}]}]}' },
+      {
+        pattern = "/vulns/",
+        body = vim.json.encode({
+          id = "TEST-1",
+          database_specific = { severity = case[1] },
+          severity = { { type = "CVSS_V3", score = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" } },
+        }),
+      },
+    })
+    local results = run_audit({ { name = "demo", version = "1" } })
+    restore()
+    MiniTest.expect.equality(results[1].vulnerabilities[1].severity, case[2])
+  end
+end
+
+T["moderate advisories sort above low ones"] = function()
+  require("pydeps.providers.osv")._clear_cache()
+  local _, restore = stub_requests({
+    { pattern = "querybatch$", body = '{"results":[{"vulns":[{"id":"LOW-1"},{"id":"MOD-1"}]}]}' },
+    {
+      pattern = "/vulns/LOW%-1",
+      body = vim.json.encode({ id = "LOW-1", database_specific = { severity = "LOW" } }),
+    },
+    {
+      pattern = "/vulns/MOD%-1",
+      body = vim.json.encode({ id = "MOD-1", database_specific = { severity = "MODERATE" } }),
+    },
+  })
+  local results = run_audit({ { name = "demo", version = "1" } })
+  restore()
+  MiniTest.expect.equality(results[1].vulnerabilities[1].id, "MOD-1")
+  MiniTest.expect.equality(results[1].vulnerabilities[2].id, "LOW-1")
+end
+
 return T

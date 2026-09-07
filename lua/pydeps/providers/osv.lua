@@ -222,7 +222,8 @@ local function severity_rank(severity)
   if key == "HIGH" then
     return 3
   end
-  if key == "MEDIUM" then
+  -- GitHub advisories, which OSV serves for PyPI, label this level MODERATE.
+  if key == "MEDIUM" or key == "MODERATE" then
     return 2
   end
   if key == "LOW" then
