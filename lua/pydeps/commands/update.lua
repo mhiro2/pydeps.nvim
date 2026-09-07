@@ -101,8 +101,17 @@ local function update_dependency(bufnr, dep)
     return
   end
 
+  local changedtick = vim.api.nvim_buf_get_changedtick(bufnr)
+  local original_line = vim.api.nvim_buf_get_lines(bufnr, dep.line - 1, dep.line, false)[1]
   pypi.get(dep.name, function(meta)
     if not vim.api.nvim_buf_is_valid(bufnr) then
+      return
+    end
+    if
+      vim.api.nvim_buf_get_changedtick(bufnr) ~= changedtick
+      or vim.api.nvim_buf_get_lines(bufnr, dep.line - 1, dep.line, false)[1] ~= original_line
+    then
+      vim.notify("pydeps: buffer changed while fetching metadata; retry update", vim.log.levels.WARN)
       return
     end
     if not meta or not meta.info or not meta.info.version then
@@ -110,8 +119,9 @@ local function update_dependency(bufnr, dep)
       return
     end
     local updated = update_version(dep.spec, meta.info.version)
-    edit.replace_dependency(bufnr, dep, updated)
-    state.refresh(bufnr)
+    if edit.replace_dependency(bufnr, dep, updated) then
+      state.refresh(bufnr)
+    end
   end)
 end
 

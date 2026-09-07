@@ -247,6 +247,7 @@ require("blink.cmp").setup({
 
 - `:PyDepsToggle` — toggle inline badges and diagnostics
 - `:PyDepsUpdate [package]` — update dependency under cursor (or named package)
+  - Cancelled if the buffer changes while metadata is loading; retry on the current contents
 - `:PyDepsResolve` — resolve dependencies via `uv` and show lockfile diff
   - `:PyDepsResolve!` shows diff only (no lock)
 - `:PyDepsWhy [package]` — show transitive provenance for dependency

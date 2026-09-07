@@ -106,6 +106,8 @@ pydeps.setup({opts})                                           *pydeps.setup()*
       - If [package] is omitted and cursor is on a dependency, updates it.
       - If [package] is provided, updates that package.
       - If not on a dependency, prompts for a package name.
+    The update is cancelled if the buffer changes while the metadata is
+    loading. Retry the command on the current contents.
 
 :PyDepsResolve                                                *:PyDepsResolve*
     Run `uv lock` to resolve dependencies. Shows a lockfile diff after
