@@ -6,6 +6,7 @@
 ---@field id string
 ---@field summary string
 ---@field severity string
+---@field severity_scores table[]
 ---@field fixed_version? string
 ---@field aliases string[]
 
@@ -124,11 +125,11 @@ end
 ---@param score? string
 ---@return string?
 local function severity_from_score(score)
-  if not score or score == "" then
+  if type(score) ~= "string" or not score:match("^%d+%.?%d*$") then
     return nil
   end
-  local numeric = tonumber(score:match("%d+%.?%d*"))
-  if not numeric then
+  local numeric = tonumber(score)
+  if not numeric or numeric > 10 then
     return nil
   end
   if numeric >= 9.0 then
@@ -211,33 +212,48 @@ local function extract_fixed_version(vulnerability, package_name)
   return table.concat(versions, ", ")
 end
 
+---@param severity string
+---@return integer
+local function severity_rank(severity)
+  local key = severity and severity:upper() or "UNKNOWN"
+  if key == "CRITICAL" then
+    return 4
+  end
+  if key == "HIGH" then
+    return 3
+  end
+  if key == "MEDIUM" then
+    return 2
+  end
+  if key == "LOW" then
+    return 1
+  end
+  return 0
+end
+
 ---@param vulnerability table
 ---@return string
 local function extract_severity(vulnerability)
+  local best = "UNKNOWN"
   local db_specific = vulnerability.database_specific
-  if type(db_specific) == "table" and type(db_specific.severity) == "string" and db_specific.severity ~= "" then
-    return db_specific.severity:upper()
-  end
-
-  local best = nil
-  local severity_items = vulnerability.severity
-  if type(severity_items) == "table" then
-    for _, item in ipairs(severity_items) do
-      if type(item) == "table" then
-        local from_score = severity_from_score(item.score)
-        if from_score then
-          best = from_score
-          if best == "CRITICAL" then
-            break
-          end
-        elseif type(item.type) == "string" and item.type ~= "" then
-          best = item.type:upper()
-        end
-      end
+  if type(db_specific) == "table" and type(db_specific.severity) == "string" then
+    local label = db_specific.severity:upper()
+    if severity_rank(label) > 0 then
+      best = label
     end
   end
 
-  return best or "UNKNOWN"
+  for _, item in ipairs(type(vulnerability.severity) == "table" and vulnerability.severity or {}) do
+    if type(item) == "table" and (item.type == "CVSS_V2" or item.type == "CVSS_V3" or item.type == "CVSS_V4") then
+      -- Vector strings require a version-specific calculator. Preserve them
+      -- in severity_scores without mistaking the CVSS version for a score.
+      local label = severity_from_score(item.score)
+      if label and severity_rank(label) > severity_rank(best) then
+        best = label
+      end
+    end
+  end
+  return best
 end
 
 ---@param vulnerability table
@@ -270,28 +286,10 @@ local function normalize_vulnerability(vulnerability, package_name)
     id = id,
     summary = summary,
     severity = extract_severity(vulnerability),
+    severity_scores = type(vulnerability.severity) == "table" and vim.deepcopy(vulnerability.severity) or {},
     fixed_version = extract_fixed_version(vulnerability, package_name),
     aliases = aliases,
   }
-end
-
----@param severity string
----@return integer
-local function severity_rank(severity)
-  local key = severity and severity:upper() or "UNKNOWN"
-  if key == "CRITICAL" then
-    return 4
-  end
-  if key == "HIGH" then
-    return 3
-  end
-  if key == "MEDIUM" then
-    return 2
-  end
-  if key == "LOW" then
-    return 1
-  end
-  return 0
 end
 
 ---@param a PyDepsOSVVulnerability

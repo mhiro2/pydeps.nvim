@@ -125,6 +125,11 @@ local function build_lines(results, opts)
     for _, vulnerability in ipairs(result.vulnerabilities) do
       table.insert(lines, format_vulnerability(vulnerability))
       table.insert(lines, "      " .. (vulnerability.summary or "(no summary)"))
+      for _, score in ipairs(vulnerability.severity_scores or {}) do
+        if type(score) == "table" and type(score.type) == "string" and type(score.score) == "string" then
+          table.insert(lines, "      " .. score.type .. ": " .. score.score)
+        end
+      end
     end
   end
 

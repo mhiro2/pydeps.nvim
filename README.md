@@ -256,6 +256,7 @@ require("blink.cmp").setup({
 - `:PyDepsAudit` — audit `uv.lock` dependencies against OSV vulnerabilities
   - Failed and unscanned packages are listed separately, never counted as clean scans
   - A failed request retains its error during the 60-second retry backoff
+  - CVSS vectors are preserved in the report; without a numeric score or a recognized database severity, their severity is UNKNOWN
 - `:PyDepsTree` — show dependency tree (uses `--frozen` by default)
   - `:PyDepsTree --resolve` skips frozen mode and attempts dependency resolution
 

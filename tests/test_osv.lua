@@ -313,4 +313,47 @@ T["audit report excludes failed packages from scanned totals"] = function()
   MiniTest.expect.equality(table.concat(lines, "\n"):find("No known vulnerabilities", 1, true), nil)
 end
 
+T["CVSS vectors remain unknown and retain original evaluations"] = function()
+  for _, evaluation in ipairs({
+    { type = "CVSS_V2", score = "AV:N/AC:L/Au:N/C:C/I:C/A:C" },
+    { type = "CVSS_V3", score = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" },
+    { type = "CVSS_V4", score = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N" },
+  }) do
+    require("pydeps.providers.osv")._clear_cache()
+    local _, restore = stub_requests({
+      { pattern = "querybatch$", body = '{"results":[{"vulns":[{"id":"TEST-1"}]}]}' },
+      { pattern = "/vulns/", body = vim.json.encode({ id = "TEST-1", severity = { evaluation } }) },
+    })
+    local results = run_audit({ { name = "demo", version = "1" } })
+    restore()
+    MiniTest.expect.equality(results[1].vulnerabilities[1].severity, "UNKNOWN")
+    MiniTest.expect.equality(results[1].vulnerabilities[1].severity_scores, { evaluation })
+  end
+end
+
+T["severity aggregation keeps highest recognized evaluation regardless of order"] = function()
+  for _, scores in ipairs({ { "8.0", "3.0" }, { "3.0", "8.0" } }) do
+    require("pydeps.providers.osv")._clear_cache()
+    local _, restore = stub_requests({
+      { pattern = "querybatch$", body = '{"results":[{"vulns":[{"id":"TEST-1"}]}]}' },
+      {
+        pattern = "/vulns/",
+        body = vim.json.encode({
+          id = "TEST-1",
+          database_specific = { severity = "LOW" },
+          severity = {
+            { type = "CVSS_V3", score = scores[1] },
+            { type = "CVSS_V3", score = scores[2] },
+            { type = "CVSS_V4", score = "CVSS:4.0/AV:N" },
+            { type = "OTHER", score = "10.0" },
+          },
+        }),
+      },
+    })
+    local results = run_audit({ { name = "demo", version = "1" } })
+    restore()
+    MiniTest.expect.equality(results[1].vulnerabilities[1].severity, "HIGH")
+  end
+end
+
 return T
