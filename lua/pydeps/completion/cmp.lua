@@ -25,7 +25,7 @@ end
 function source:complete(params, callback)
   local bufnr = params.context.bufnr
   local cursor = params.context.cursor
-  completion.complete(bufnr, cursor, callback)
+  completion.complete(bufnr, { cursor.row, cursor.col - 1 }, callback)
 end
 
 return source
