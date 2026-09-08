@@ -101,8 +101,17 @@ local function update_dependency(bufnr, dep)
     return
   end
 
+  local changedtick = vim.api.nvim_buf_get_changedtick(bufnr)
+  local original_line = vim.api.nvim_buf_get_lines(bufnr, dep.line - 1, dep.line, false)[1]
   pypi.get(dep.name, function(meta)
     if not vim.api.nvim_buf_is_valid(bufnr) then
+      return
+    end
+    if
+      vim.api.nvim_buf_get_changedtick(bufnr) ~= changedtick
+      or vim.api.nvim_buf_get_lines(bufnr, dep.line - 1, dep.line, false)[1] ~= original_line
+    then
+      vim.notify("pydeps: buffer changed while fetching metadata; retry update", vim.log.levels.WARN)
       return
     end
     if not meta or not meta.info or not meta.info.version then
@@ -110,15 +119,19 @@ local function update_dependency(bufnr, dep)
       return
     end
     local updated = update_version(dep.spec, meta.info.version)
-    edit.replace_dependency(bufnr, dep, updated)
-    state.refresh(bufnr)
+    if edit.replace_dependency(bufnr, dep, updated) then
+      state.refresh(bufnr)
+    end
   end)
 end
 
+local run_for_buffer
+
+---@param bufnr integer
 ---@param target? string
 ---@param deps PyDepsDependency[]
 ---@return PyDepsDependency?
-local function find_dependency(target, deps)
+local function find_dependency(bufnr, target, deps)
   if target and target ~= "" then
     local dep = find_dep_by_name(target, deps)
     if not dep then
@@ -132,9 +145,11 @@ local function find_dependency(target, deps)
     return dep
   end
 
+  -- The prompt is asynchronous, so resume on the buffer that asked for the
+  -- update rather than on whichever buffer is current when the name arrives.
   vim.ui.input({ prompt = "pydeps: package name" }, function(input)
     if input and input ~= "" then
-      local ok, err = pcall(M.run, input)
+      local ok, err = pcall(run_for_buffer, bufnr, input)
       if not ok then
         vim.notify(
           string.format("pydeps: failed to update dependency: %s", err or "unknown error"),
@@ -147,6 +162,24 @@ local function find_dependency(target, deps)
   return nil
 end
 
+---@param bufnr integer
+---@param target? string
+---@return nil
+function run_for_buffer(bufnr, target)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    vim.notify("pydeps: buffer is no longer available; retry update", vim.log.levels.WARN)
+    return
+  end
+
+  local deps = buffer_context.get_deps(bufnr)
+  local dep = find_dependency(bufnr, target, deps)
+  if not dep then
+    return
+  end
+
+  update_dependency(bufnr, dep)
+end
+
 ---@param target? string
 ---@return nil
 function M.run(target)
@@ -156,13 +189,7 @@ function M.run(target)
     return
   end
 
-  local deps = buffer_context.get_deps(bufnr)
-  local dep = find_dependency(target, deps)
-  if not dep then
-    return
-  end
-
-  update_dependency(bufnr, dep)
+  run_for_buffer(bufnr, target)
 end
 
 return M

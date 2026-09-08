@@ -28,11 +28,25 @@ Key Features:
   • Lock mismatch detection (pinned version vs resolved version)
   • Pin validation (checks if pinned versions exist on public PyPI)
   • Environment-aware dependency evaluation (PEP 508 markers)
+    Version fields use PEP 440 specifiers, including ~=, ===, and wildcards.
+    Comparisons preserve case, and in/not in are substring membership on
+    every field. Invalid markers and unknown fields are reported and drop
+    the dependency to an unknown state; while the environment is still
+    being read the marker stays pending and the locked version is still
+    shown. group/dependency_group are pydeps extensions. extras and
+    dependency_groups require an explicit lock marker evaluation context.
   • Direct integration with uv (lock, tree)
   • Dependency tree inspection ("why is this installed?")
   • Lockfile diff view (before/after resolve)
   • PyPI-aware dependency info and diagnostics
   • Completion for packages, versions, extras, and groups
+
+Universal lockfiles preserve every name/version/source identity and their
+conditional edges. Inline versions are projected with the detected
+environment's markers; ambiguous forks stay unresolved. This is a view of a
+resolution, not of the installed environment, and the audit covers all locked
+versions. Optional provenance edges require their extra or group to be
+selected.
 
 Supported Files:
   • pyproject.toml
@@ -106,6 +120,10 @@ pydeps.setup({opts})                                           *pydeps.setup()*
       - If [package] is omitted and cursor is on a dependency, updates it.
       - If [package] is provided, updates that package.
       - If not on a dependency, prompts for a package name.
+    The update is cancelled if the buffer changes while the metadata is
+    loading. Retry the command on the current contents. The package name
+    prompt applies to the buffer that asked for the update, not to
+    whichever buffer is current when the name is entered.
 
 :PyDepsResolve                                                *:PyDepsResolve*
     Run `uv lock` to resolve dependencies. Shows a lockfile diff after
@@ -127,7 +145,14 @@ pydeps.setup({opts})                                           *pydeps.setup()*
       • group/extra: Dependency group or extra (if present)
 
 :PyDepsAudit                                                    *:PyDepsAudit*
-    Audit all resolved dependencies in uv.lock against OSV.
+    Audit every distinct name/version in the universal uv.lock against OSV,
+    including forks for other platforms. Duplicate sources are queried once.
+    Failed and unscanned packages are listed separately and are never
+    counted as clean scans. A failed request retains its error during the
+    60-second retry backoff.
+    CVSS vectors are preserved in the report; without a numeric score or a
+    recognized database severity, their severity is UNKNOWN. GitHub's
+    MODERATE level ranks with MEDIUM.
     Opens a floating report window with:
       • scanned package count
       • vulnerable package count

@@ -3,6 +3,10 @@ local helpers = require("tests.test_helpers")
 
 local T = helpers.create_test_set()
 
+local function package_named(data, name)
+  return data.packages[data.by_name[name][1]]
+end
+
 T["parse uv.lock packages"] = function()
   local lockfile = require("pydeps.sources.lockfile")
   local path = helpers.write_temp_file({
@@ -61,8 +65,8 @@ T["parse uv.lock dependencies"] = function()
     'name = "requests"',
     'version = "2.32.3"',
     "dependencies = [",
-    '  "charset-normalizer>=2",',
-    '  "idna>=2.5",',
+    '  { name = "charset-normalizer" },',
+    '  { name = "idna" },',
     "]",
     "",
     "[[package.files]]",
@@ -73,8 +77,8 @@ T["parse uv.lock dependencies"] = function()
   helpers.cleanup_temp_file(path)
 
   MiniTest.expect.equality(data.resolved.requests, "2.32.3")
-  MiniTest.expect.equality(data.packages.requests.dependencies[1], "charset-normalizer>=2")
-  MiniTest.expect.equality(data.packages.requests.dependencies[2], "idna>=2.5")
+  MiniTest.expect.equality(package_named(data, "requests").dependencies[1].name, "charset-normalizer")
+  MiniTest.expect.equality(package_named(data, "requests").dependencies[2].name, "idna")
 end
 
 T["parse uv.lock - boundary conditions"] = function()
@@ -139,7 +143,7 @@ T["parse uv.lock - malformed toml"] = function()
   local result_empty_deps = lockfile.parse_full(empty_deps_path)
   helpers.cleanup_temp_file(empty_deps_path)
   MiniTest.expect.equality(result_empty_deps.resolved.requests, "2.32.3")
-  MiniTest.expect.equality(#result_empty_deps.packages.requests.dependencies, 0)
+  MiniTest.expect.equality(#package_named(result_empty_deps, "requests").dependencies, 0)
 
   -- unclosed dependencies array (graceful handling)
   local unclosed_path = helpers.write_temp_file({
@@ -167,52 +171,62 @@ T["parse uv.lock - special characters"] = function()
   local result_special_name = lockfile.parse_full(special_name_path)
   helpers.cleanup_temp_file(special_name_path)
   MiniTest.expect.equality(result_special_name.resolved["my_awesome-package"], "1.0.0")
-
-  -- dependency with extras notation
-  local extras_path = helpers.write_temp_file({
-    "[[package]]",
-    'name = "requests"',
-    'version = "2.32.3"',
-    "dependencies = [",
-    '  "requests[security]>=2.0",',
-    "  \"package-with-underscore; python_version>='3.8'\",",
-    "]",
-  }, ".lock")
-  local result_extras = lockfile.parse_full(extras_path)
-  helpers.cleanup_temp_file(extras_path)
-  MiniTest.expect.equality(result_extras.packages.requests.dependencies[1], "requests[security]>=2.0")
-  MiniTest.expect.equality(
-    result_extras.packages.requests.dependencies[2],
-    "package-with-underscore; python_version>='3.8'"
-  )
 end
 
-T["build_graph - boundary conditions"] = function()
+T["universal forks preserve identities and project only a known environment"] = function()
   local lockfile = require("pydeps.sources.lockfile")
+  local data = lockfile.parse_full("tests/fixtures/fork.uv.lock")
+  MiniTest.expect.equality(#data.by_name.demo, 2)
+  MiniTest.expect.equality(data.resolved.demo, nil)
+  local linux = lockfile.project(data, { sys_platform = "linux" })
+  local windows = lockfile.project(data, { sys_platform = "win32" })
+  MiniTest.expect.equality(linux.resolved.demo, "1.0")
+  MiniTest.expect.equality(windows.resolved.demo, "2.0")
+  MiniTest.expect.equality(lockfile.project(data, {}).ambiguous.demo, true)
+  MiniTest.expect.equality(linux.graph.app, { "demo" })
+  MiniTest.expect.equality(windows.graph.app, { "demo" })
+  MiniTest.expect.equality(linux.graph.demo, {})
+  MiniTest.expect.equality(lockfile.project(data, { sys_platform = "linux", extra = "speed" }).graph.demo, { "child" })
+  MiniTest.expect.equality(lockfile.project(data, { sys_platform = "linux", group = "test" }).graph.demo, { "tester" })
+  MiniTest.expect.equality(data.by_name["2.0"], nil)
+  MiniTest.expect.equality(data.by_name.sys_platform, nil)
+  MiniTest.expect.equality(#data.by_name.same, 2)
+  MiniTest.expect.equality(data.resolved.same, nil)
+  local edge = package_named(data, "app").dependencies[1]
+  MiniTest.expect.equality(edge.version, "1.0")
+  MiniTest.expect.equality(edge.source.registry, "https://pypi.org/simple")
+  MiniTest.expect.equality(edge.marker, "sys_platform == 'linux'")
+end
 
-  -- nil packages should return empty graph
-  local graph_nil = lockfile.build_graph(nil)
-  MiniTest.expect.equality(next(graph_nil), nil)
+T["uv generated fork parses synchronously and asynchronously"] = function()
+  local lockfile = require("pydeps.sources.lockfile")
+  local path = "tests/fixtures/generated-fork.uv.lock"
+  local data = lockfile.parse_full(path)
+  MiniTest.expect.equality(#data.by_name.demo, 2)
+  MiniTest.expect.equality(lockfile.snapshot(data).demo, "1.0, 2.0")
+  MiniTest.expect.equality(lockfile.project(data, { sys_platform = "linux" }).resolved.demo, "1.0")
+  MiniTest.expect.equality(lockfile.project(data, { sys_platform = "win32" }).resolved.demo, "2.0")
+  MiniTest.expect.equality(lockfile.project(data, { sys_platform = "linux" }).graph["fork-app"], { "demo" })
+  MiniTest.expect.equality(lockfile.project(data, { sys_platform = "linux" }).graph.demo, { "child" })
+  local async_data
+  lockfile.parse_async(path, function(result)
+    async_data = result
+  end)
+  vim.wait(1000, function()
+    return async_data ~= nil
+  end)
+  MiniTest.expect.equality(async_data, data)
+end
 
-  -- empty packages should return empty graph
-  local graph_empty = lockfile.build_graph({})
-  MiniTest.expect.equality(next(graph_empty), nil)
-
-  -- packages with no dependencies
-  local graph_no_deps = lockfile.build_graph({
-    pkg1 = { name = "pkg1", version = "1.0.0", dependencies = {} },
+T["lock values preserve escaped quotes and Unicode in source identities"] = function()
+  local value = require("pydeps.sources.lock_value")
+  MiniTest.expect.equality(value.parse([["\U00000022"]]), '"')
+  MiniTest.expect.equality(value.parse([["\\u0022"]]), [[\u0022]])
+  MiniTest.expect.equality(value.parse([["\u0022"]]), '"')
+  MiniTest.expect.equality(value.parse([[{ directory = "folder\\name", marker = "os_name == 'posix'" }]]), {
+    directory = [[folder\name]],
+    marker = "os_name == 'posix'",
   })
-  MiniTest.expect.equality(#graph_no_deps.pkg1, 0)
-
-  -- packages with duplicate dependencies (should be deduplicated)
-  local graph_dup = lockfile.build_graph({
-    pkg1 = {
-      name = "pkg1",
-      version = "1.0.0",
-      dependencies = { "dep1", "dep2", "dep1", "dep3>=1.0", "dep2>=2.0" },
-    },
-  })
-  MiniTest.expect.equality(#graph_dup.pkg1, 3) -- dep1, dep2, dep3
 end
 
 return T

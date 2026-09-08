@@ -1,0 +1,51 @@
+version = 1
+revision = 3
+requires-python = ">=3.10"
+resolution-markers = ["sys_platform == 'linux'", "sys_platform != 'linux'"]
+
+[[package]]
+name = "app"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "demo", version = "1.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux'" },
+    { name = "demo", version = "2.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
+]
+
+[[package]]
+name = "demo"
+version = "1.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = ["sys_platform == 'linux'"]
+
+[package.optional-dependencies]
+speed = [{ name = "child" }]
+
+[package.dev-dependencies]
+test = [{ name = "tester", marker = "sys_platform == 'linux'" }]
+
+[[package]]
+name = "demo"
+version = "2.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = ["sys_platform != 'linux'"]
+
+[[package]]
+name = "child"
+version = "3.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "tester"
+version = "1.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "same"
+version = "1.0"
+source = { registry = "https://private.example/simple" }
+
+[[package]]
+name = "same"
+version = "1.0"
+source = { git = "https://example.com/same?rev=123#123" }

@@ -34,8 +34,8 @@ pydeps.nvim answers:
 > "What version will actually be installed, and why?"
 
 Key differences:
-- **Lockfile-first**: Shows what WILL be installed, not what COULD be installed
-- **Environment-aware**: Full PEP 508 marker evaluation (Python version, platform, extras, groups)
+- **Lockfile-first**: Shows locked versions selected by known environment markers
+- **Environment-aware**: PEP 508 marker evaluation with PEP 440 version comparisons (Python version, platform, extras, groups)
 - **Modern tooling**: Deep integration with `uv` instead of generic pip/requirements
 - **Editor-native workflow**: Review lockfile changes before committing
 
@@ -52,6 +52,21 @@ pydeps.nvim brings the **crates.nvim workflow to Python** with a focus on what w
 - ⚡ **Review-first resolve**: `uv lock` + lockfile diff before committing
 - 🧰 **Mismatch detection**: pin vs resolved version + yanked checks on PyPI
 - 🔐 **Security audit**: lockfile-wide vulnerability scan via OSV
+
+Marker comparisons preserve case, and `in`/`not in` are substring membership on every
+field. Ordering comparisons on version fields support PEP 440 ordering, compatible
+releases (`~=`), wildcards, and arbitrary equality (`===`). Invalid markers and unknown
+fields are reported and drop the dependency to an unknown state; while the environment
+is still being read the marker stays pending and the locked version is still shown.
+`group` and `dependency_group` are pydeps extensions. Lock marker sets (`extras`,
+`dependency_groups`) require an explicit evaluation context.
+
+Universal lockfiles retain every name/version/source identity. Inline versions are
+projected using the detected Python environment; ambiguous forks remain unresolved
+until their markers can select one identity. This is a lockfile view, not a report
+of packages already installed. Audits cover all locked versions regardless of the
+current environment. Conditional dependency edges retain versions, sources, markers,
+extras, and development groups; optional paths require their extra/group selection.
 
 ### Optional
 
@@ -247,11 +262,16 @@ require("blink.cmp").setup({
 
 - `:PyDepsToggle` — toggle inline badges and diagnostics
 - `:PyDepsUpdate [package]` — update dependency under cursor (or named package)
+  - Cancelled if the buffer changes while metadata is loading; retry on the current contents
+  - The package name prompt applies to the buffer that asked, not the current one
 - `:PyDepsResolve` — resolve dependencies via `uv` and show lockfile diff
   - `:PyDepsResolve!` shows diff only (no lock)
 - `:PyDepsWhy [package]` — show transitive provenance for dependency
 - `:PyDepsInfo` — inspect dependency under cursor
-- `:PyDepsAudit` — audit `uv.lock` dependencies against OSV vulnerabilities
+- `:PyDepsAudit` — audit every distinct locked name/version against OSV, including all universal resolution forks
+  - Failed and unscanned packages are listed separately, never counted as clean scans
+  - A failed request retains its error during the 60-second retry backoff
+  - CVSS vectors are preserved in the report; without a numeric score or a recognized database severity, their severity is UNKNOWN. GitHub's MODERATE level ranks with MEDIUM
 - `:PyDepsTree` — show dependency tree (uses `--frozen` by default)
   - `:PyDepsTree --resolve` skips frozen mode and attempts dependency resolution
 

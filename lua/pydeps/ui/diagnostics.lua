@@ -85,8 +85,11 @@ local function compute_diagnostics(bufnr, deps, resolved, opts)
     local marker = view.marker
     local active = view.active
     local resolved_version = view.resolved
+    local ambiguous = opts and opts.lockfile_ambiguous and opts.lockfile_ambiguous[dep.name]
 
-    if marker and not active and resolved_version then
+    if view.marker_status == "invalid" or view.marker_status == "unknown" then
+      table.insert(diagnostics, make_diag(dep, view.status_text, config.options.diagnostic_severity.marker))
+    elseif marker and active == false and resolved_version then
       table.insert(
         diagnostics,
         make_diag(
@@ -95,7 +98,7 @@ local function compute_diagnostics(bufnr, deps, resolved, opts)
           config.options.diagnostic_severity.marker
         )
       )
-    elseif marker and active and not resolved_version and not lockfile_missing then
+    elseif marker and active and not resolved_version and not lockfile_missing and not ambiguous then
       table.insert(
         diagnostics,
         make_diag(
@@ -104,7 +107,7 @@ local function compute_diagnostics(bufnr, deps, resolved, opts)
           config.options.diagnostic_severity.marker
         )
       )
-    elseif not lockfile_missing and active and not resolved_version then
+    elseif not lockfile_missing and active and not resolved_version and not ambiguous then
       table.insert(
         diagnostics,
         make_diag(dep, "declared in pyproject.toml but missing in uv.lock", config.options.diagnostic_severity.lock)

@@ -1,381 +1,266 @@
----@class PyDepsMarkerToken
----@field kind string
----@field value string
-
----@class PyDepsMarkerNode
----@field type string
----@field value? string
----@field op? string
----@field left? PyDepsMarkerNode
----@field right? PyDepsMarkerNode
-
 local util = require("pydeps.util")
-
+local version = require("pydeps.core.version")
 local M = {}
+local cache = util.create_lru_cache(100)
 
--- LRU caches for tokenize and parse results (max 100 entries to prevent memory leaks)
-local tokenize_cache = util.create_lru_cache(100)
-local parse_cache = util.create_lru_cache(100)
+local fields = {
+  python_version = "version",
+  python_full_version = "version",
+  implementation_version = "version",
+  platform_release = "version_or_string",
+  platform_version = "version_or_string",
+  os_name = "string",
+  sys_platform = "string",
+  platform_system = "string",
+  platform_machine = "string",
+  platform_python_implementation = "string",
+  implementation_name = "string",
+  extra = "extra",
+  extras = "set",
+  dependency_groups = "set",
+  -- Project dependency group selectors are a pydeps extension.
+  group = "string",
+  dependency_group = "string",
+}
 
----@param expr string
----@return PyDepsMarkerToken[]
 local function tokenize(expr)
-  local cached = tokenize_cache:get(expr)
-  if cached then
-    return cached
-  end
-
-  local tokens = {}
-  local i = 1
-  local len = #expr
-
-  local function push(kind, value)
-    table.insert(tokens, { kind = kind, value = value })
-  end
-
-  while i <= len do
-    local ch = expr:sub(i, i)
+  local tokens, i = {}, 1
+  while i <= #expr do
+    local rest, ch = expr:sub(i), expr:sub(i, i)
+    local value, kind
     if ch:match("%s") then
       i = i + 1
-    elseif ch == "(" or ch == ")" then
-      push(ch, ch)
-      i = i + 1
-    elseif ch == "'" or ch == '"' then
-      local quote = ch
-      local j = i + 1
-      local value = {}
-      while j <= len do
-        local cj = expr:sub(j, j)
-        if cj == quote then
-          break
-        end
-        table.insert(value, cj)
-        j = j + 1
-      end
-      push("string", table.concat(value))
-      i = j + 1
     else
-      local rest = expr:sub(i)
-      local op = rest:match("^not%s+in")
-      if op then
-        push("op", "not in")
-        i = i + #op
+      if ch == "'" or ch == '"' then
+        local finish = expr:find(ch, i + 1, true)
+        if not finish then
+          return nil
+        end
+        value, kind = expr:sub(i + 1, finish - 1), "string"
+        i = finish + 1
       else
-        op = rest:match("^(in)%f[%s]")
-        if op then
-          push("op", "in")
-          i = i + #op
+        if ch == "(" or ch == ")" then
+          value, kind = ch, ch
         else
-          op = rest:match("^(and)%f[%s]")
-          if op then
-            push("op", "and")
-            i = i + #op
-          else
-            op = rest:match("^(or)%f[%s]")
-            if op then
-              push("op", "or")
-              i = i + #op
-            else
-              op = rest:match("^(===?)")
-              if op then
-                push("op", op)
-                i = i + #op
-              else
-                op = rest:match("^([<>!]=)")
-                if op then
-                  push("op", op)
-                  i = i + #op
-                else
-                  op = rest:match("^([<>])")
-                  if op then
-                    push("op", op)
-                    i = i + #op
-                  else
-                    local ident = rest:match("^([%w_%.]+)")
-                    if ident then
-                      push("ident", ident)
-                      i = i + #ident
-                    else
-                      i = i + 1
-                    end
-                  end
-                end
-              end
+          value = rest:match("^===") or rest:match("^[=<>!~]=") or rest:match("^[<>]")
+          kind = "op"
+          if not value then
+            value = rest:match("^not%s+in%f[^%w_]")
+            if not value then
+              value = rest:match("^[%a_][%w_]*")
+              kind = "ident"
             end
           end
         end
+        if not value then
+          return nil
+        end
+        i = i + #value
+        if value:match("^not%s+in$") then
+          value = "not in"
+        elseif value == "in" or value == "and" or value == "or" then
+          kind = "op"
+        end
       end
+      tokens[#tokens + 1] = { kind = kind, value = value }
     end
   end
-
-  tokenize_cache:set(expr, tokens)
   return tokens
 end
 
----@param tokens PyDepsMarkerToken[]
----@return PyDepsMarkerNode?
-local function parser(tokens)
-  -- Generate a cache key from tokens
-  local cache_key = table.concat(
-    vim.tbl_map(function(t)
-      return t.kind .. ":" .. t.value
-    end, tokens),
-    "|"
-  )
-
-  local cached = parse_cache:get(cache_key)
-  if cached ~= nil then
-    return cached
+local function parse(expr)
+  local cached = cache:get(expr)
+  if cached then
+    return cached.node, cached.reason
   end
-
-  local pos = 1
+  local tokens = tokenize(expr)
+  if not tokens then
+    return nil, "invalid"
+  end
+  local pos, reason, depth = 1, nil, 0
   local parse_or
-
-  local function peek()
-    return tokens[pos]
-  end
-
-  local function consume()
-    local t = tokens[pos]
-    pos = pos + 1
-    return t
-  end
-
-  local function parse_term()
-    local t = peek()
-    if not t then
+  local function operand()
+    local token = tokens[pos]
+    if not token or (token.kind ~= "ident" and token.kind ~= "string") then
+      reason = "invalid"
       return nil
     end
-    if t.kind == "string" then
-      consume()
-      return { type = "string", value = t.value }
+    if token.kind == "ident" and not fields[token.value] then
+      reason = "unknown"
     end
-    if t.kind == "ident" then
-      consume()
-      return { type = "ident", value = t.value }
+    pos = pos + 1
+    return token
+  end
+  local function expression()
+    depth = depth + 1
+    if depth > 100 then
+      reason = "invalid"
+      return nil
     end
-    if t.kind == "(" then
-      consume()
-      local expr = parse_or()
-      if peek() and peek().kind == ")" then
-        consume()
+    local node
+    if tokens[pos] and tokens[pos].kind == "(" then
+      pos = pos + 1
+      node = parse_or()
+      if not tokens[pos] or tokens[pos].kind ~= ")" then
+        reason = "invalid"
+        return nil
       end
-      return expr
+      pos = pos + 1
+    else
+      local left = operand()
+      local op = tokens[pos]
+      if not left or not op or op.kind ~= "op" or op.value == "and" or op.value == "or" then
+        reason = "invalid"
+        return nil
+      end
+      pos = pos + 1
+      local right = operand()
+      if not right or (left.kind == "ident") == (right.kind == "ident") then
+        reason = "invalid"
+        return nil
+      end
+      node = { op = op.value, left = left, right = right }
     end
-    return nil
+    depth = depth - 1
+    return node
   end
-
-  local function parse_compare()
-    local left = parse_term()
-    local t = peek()
-    if t and t.kind == "op" and t.value ~= "and" and t.value ~= "or" then
-      local op = consume().value
-      local right = parse_term()
-      return { type = "compare", op = op, left = left, right = right }
-    end
-    return left
-  end
-
   local function parse_and()
-    local node = parse_compare()
-    while true do
-      local t = peek()
-      if t and t.kind == "op" and t.value == "and" then
-        consume()
-        node = { type = "and", left = node, right = parse_compare() }
-      else
-        break
+    local node = expression()
+    while node and tokens[pos] and tokens[pos].value == "and" do
+      pos = pos + 1
+      local right = expression()
+      if not right then
+        return nil
       end
+      node = { op = "and", left = node, right = right }
     end
     return node
   end
-
   function parse_or()
     local node = parse_and()
-    while true do
-      local t = peek()
-      if t and t.kind == "op" and t.value == "or" then
-        consume()
-        node = { type = "or", left = node, right = parse_and() }
-      else
-        break
+    while node and tokens[pos] and tokens[pos].value == "or" do
+      pos = pos + 1
+      local right = parse_and()
+      if not right then
+        return nil
       end
+      node = { op = "or", left = node, right = right }
     end
     return node
   end
-
-  local result = parse_or()
-  parse_cache:set(cache_key, result)
-  return result
-end
-
----@param v string|number
----@return (string|number)[]
-local function split_version(v)
-  local parts = {}
-  for part in tostring(v):gmatch("[^%.]+") do
-    local num = tonumber(part)
-    table.insert(parts, num or part)
+  local node = parse_or()
+  if pos <= #tokens then
+    reason = "invalid"
   end
-  return parts
-end
-
----@param v string|number
----@return string
-local function normalize_string(v)
-  return util.trim(tostring(v)):lower()
-end
-
----@param a string|number
----@param b string|number
----@return integer
-local function compare_versions(a, b)
-  local ap = split_version(a)
-  local bp = split_version(b)
-  local max_len = math.max(#ap, #bp)
-  for i = 1, max_len do
-    local av = ap[i] or 0
-    local bv = bp[i] or 0
-    if type(av) == "number" and type(bv) == "number" then
-      if av ~= bv then
-        return av < bv and -1 or 1
-      end
-    else
-      local as = tostring(av)
-      local bs = tostring(bv)
-      if as ~= bs then
-        return as < bs and -1 or 1
-      end
-    end
+  if reason then
+    node = nil
   end
-  return 0
+  cache:set(expr, { node = node, reason = reason })
+  return node, reason
 end
 
----@param value string|number
----@return string[]
-local function to_list(value)
-  local items = {}
-  for item in tostring(value):gmatch("[^,%s]+") do
-    table.insert(items, util.trim(item))
-  end
-  return items
+local function normalize_extra(value)
+  return (value:lower():gsub("[-_.]+", "-"))
 end
 
----@param node? PyDepsMarkerNode
----@param env table<string, any>
----@return boolean|nil
 local function evaluate(node, env)
-  if not node then
-    return true
-  end
-  if node.type == "string" then
-    return node.value
-  end
-  if node.type == "ident" then
-    local value = env[node.value]
-    -- Return nil if env key is missing (not yet fetched)
-    -- This distinguishes between "not fetched" and "falsy value"
-    if value == nil then
-      return nil
+  if node.op == "and" or node.op == "or" then
+    local left, left_reason = evaluate(node.left, env)
+    local right, right_reason = evaluate(node.right, env)
+    -- Invalid comparisons cannot become valid through boolean short-circuiting.
+    if left_reason == "invalid" or right_reason == "invalid" then
+      return nil, "invalid"
     end
-    return value
-  end
-  if node.type == "and" then
-    local left = evaluate(node.left, env)
-    local right = evaluate(node.right, env)
-    -- If left is false, short-circuit (right doesn't matter)
-    if left == false then
+    if node.op == "and" then
+      if left == false or right == false then
+        return false
+      elseif left == true and right == true then
+        return true
+      end
+    elseif left == true or right == true then
+      return true
+    elseif left == false and right == false then
       return false
     end
-    -- If left is true, result depends on right
-    if left == true then
-      return right
-    end
-    -- left is nil (undetermined), so result depends on right
-    -- If right is false, result is false (can be determined)
-    -- If right is true or nil, result is nil (still undetermined)
-    if right == false then
-      return false
-    end
-    return nil
+    return nil, "pending"
   end
-  if node.type == "or" then
-    local left = evaluate(node.left, env)
-    local right = evaluate(node.right, env)
-    -- If left is true, short-circuit (right doesn't matter)
-    if left == true then
-      return true
-    end
-    -- If left is false, check right
-    if left == false then
-      return right
-    end
-    -- left is nil (undetermined), so result depends on right
-    -- If right is true, result is true (can be determined)
-    -- If right is false or nil, result is nil (still undetermined)
-    if right == true then
-      return true
-    end
-    return nil
+  local variable = node.left.kind == "ident" and node.left or node.right
+  local field = fields[variable.value]
+  local left, right = node.left.value, node.right.value
+  if node.left.kind == "ident" then
+    left = env[node.left.value]
+  else
+    right = env[node.right.value]
   end
-  if node.type == "compare" then
-    local left = evaluate(node.left, env)
-    local right = evaluate(node.right, env)
-    -- Return nil if either side is nil (not evaluated)
-    if left == nil or right == nil then
-      return nil
+  if env[variable.value] == nil then
+    return nil, "pending"
+  end
+  local op = node.op
+  if field == "set" then
+    if type(right) ~= "table" or node.left.kind ~= "string" or (op ~= "in" and op ~= "not in") then
+      return nil, "invalid"
     end
-    local op = node.op
-    if op == "in" or op == "not in" then
-      local list = to_list(right)
-      local found = false
-      for _, item in ipairs(list) do
-        if normalize_string(left) == normalize_string(item) then
-          found = true
-          break
-        end
+    local found = false
+    for _, item in ipairs(right) do
+      if type(item) ~= "string" then
+        return nil, "invalid"
       end
-      return op == "in" and found or not found
-    end
-    local compare = nil
-    if type(left) == "string" and type(right) == "string" then
-      if node.left.type == "ident" and node.left.value:match("python") then
-        compare = compare_versions(left, right)
-      else
-        local l = normalize_string(left)
-        local r = normalize_string(right)
-        compare = l < r and -1 or (l > r and 1 or 0)
+      if normalize_extra(left) == normalize_extra(item) then
+        found = true
       end
-    else
-      compare = tostring(left) < tostring(right) and -1 or (tostring(left) > tostring(right) and 1 or 0)
     end
-    if op == "==" then
-      return compare == 0
-    elseif op == "!=" then
-      return compare ~= 0
-    elseif op == "<" then
-      return compare == -1
-    elseif op == "<=" then
-      return compare == -1 or compare == 0
-    elseif op == ">" then
-      return compare == 1
-    elseif op == ">=" then
-      return compare == 1 or compare == 0
+    if op == "not in" then
+      return not found
+    end
+    return found
+  end
+  if type(left) ~= "string" or type(right) ~= "string" then
+    return nil, "invalid"
+  end
+  if field == "extra" then
+    left, right = normalize_extra(left), normalize_extra(right)
+  end
+  if op == "in" or op == "not in" then
+    -- Membership is substring containment for every field, including version
+    -- fields: 'python_version in "3.9 3.10"' lists releases, it does not order them.
+    local found = right:find(left, 1, true) ~= nil
+    if op == "not in" then
+      return not found
+    end
+    return found
+  end
+  if field == "version" or field == "version_or_string" then
+    local result = version.matches(left, op, right)
+    if result ~= nil then
+      return result
+    elseif field == "version" then
+      return nil, "invalid"
     end
   end
-  return false
+  if op == "==" or op == "<=" or op == ">=" then
+    return left == right
+  elseif op == "!=" then
+    return left ~= right
+  elseif op == "<" or op == ">" then
+    return false
+  end
+  return nil, "invalid"
 end
 
+---Evaluate a marker without guessing missing environment values.
 ---@param marker? string
 ---@param env? table<string, any>
----@return boolean|nil Returns true if marker evaluates to true, false if to false, nil if evaluation is incomplete (env keys not yet fetched)
+---@return boolean? result
+---@return "invalid"|"unknown"|"pending"? reason Invalid syntax/comparison, unknown field, or unavailable environment value.
 function M.evaluate(marker, env)
   if not marker or util.trim(marker) == "" then
     return true
   end
-  local tokens = tokenize(marker)
-  local ast = parser(tokens)
-  return evaluate(ast, env or {})
+  local node, reason = parse(marker)
+  if not node then
+    return nil, reason or "invalid"
+  end
+  return evaluate(node, env or {})
 end
 
 return M

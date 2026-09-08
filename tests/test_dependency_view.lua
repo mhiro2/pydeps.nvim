@@ -123,4 +123,27 @@ T["dependency_view marks lockfile loading as loading status"] = function()
   MiniTest.expect.equality(view.status_text, "Loading")
 end
 
+T["dependency_view preserves marker failures and pending environment"] = function()
+  stub_pypi()
+  local dependency_view = require("pydeps.ui.dependency_view")
+  for _, case in ipairs({
+    -- A pending environment keeps the lockfile version visible; only a marker
+    -- that can never evaluate drops the dependency to an unknown state.
+    { "python_version >= '3.8'", "pending", "ok", "active" },
+    { "unknown == 'value'", "unknown", "unknown", "unknown marker field" },
+    { "python_version = '3.8'", "invalid", "unknown", "invalid marker" },
+  }) do
+    local view = dependency_view.build({ name = "pkg", spec = "pkg==1.0; " .. case[1] }, {
+      current_env = {},
+      resolved_version = "1.0",
+      meta = { info = { version = "1.0" }, releases = { ["1.0"] = {} } },
+    })
+    MiniTest.expect.equality(view.active, nil)
+    MiniTest.expect.equality(view.marker_status, case[2])
+    MiniTest.expect.equality(view.class, case[3])
+    MiniTest.expect.equality(view.status_text, case[4])
+    MiniTest.expect.equality(view.resolved, "1.0")
+  end
+end
+
 return T

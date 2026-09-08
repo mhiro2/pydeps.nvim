@@ -33,7 +33,7 @@ local function stub_requests(routes)
     local matched = false
     for _, route in ipairs(routes) do
       if url:match(route.pattern) then
-        body = route.body
+        body = type(route.body) == "function" and route.body(cmd) or route.body
         matched = true
         break
       end
@@ -232,6 +232,172 @@ T["audit skips invalid package names"] = function()
   MiniTest.expect.equality(#state.urls, 0)
   MiniTest.expect.equality(#results, 0)
   MiniTest.expect.equality(err, nil)
+end
+
+T["failed audits retain their reason during backoff"] = function()
+  local state, restore = stub_requests({ { pattern = "querybatch$", body = false } })
+  local packages = { { name = "demo", version = "1" } }
+  local first, first_error = run_audit(packages)
+  local second, second_error = run_audit(packages)
+  restore()
+  MiniTest.expect.equality(#state.urls, 1)
+  MiniTest.expect.equality(first[1].status, "failed")
+  MiniTest.expect.equality(second[1].status, "failed")
+  MiniTest.expect.equality(second_error, first_error)
+  MiniTest.expect.equality(type(second_error), "string")
+  MiniTest.expect.equality(second[1].error, first_error)
+end
+
+T["malformed batch results never become clean results"] = function()
+  for _, body in ipairs({
+    '{"results":[]}',
+    '{"results":[null]}',
+    '{"results":[[]]}',
+    '{"results":[42]}',
+    '{"results":[{"vulns":{}}]}',
+    '{"results":[{"vulns":[{}]}]}',
+    '{"results":[{},{}]}',
+    '{"results":{}}',
+  }) do
+    require("pydeps.providers.osv")._clear_cache()
+    local _, restore = stub_requests({ { pattern = "querybatch$", body = body } })
+    local results, err = run_audit({ { name = "demo", version = "1" } })
+    restore()
+    MiniTest.expect.equality(results[1].status, "failed")
+    MiniTest.expect.equality(type(err), "string")
+  end
+end
+
+T["partial batch failures preserve successful scans and continue"] = function()
+  local calls = 0
+  local _, restore = stub_requests({
+    {
+      pattern = "querybatch$",
+      body = function()
+        calls = calls + 1
+        if calls == 1 then
+          return "invalid json"
+        end
+        return '{"results":[{}]}'
+      end,
+    },
+  })
+  local packages = {}
+  for i = 1, 101 do
+    packages[i] = { name = "demo" .. i, version = "1" }
+  end
+  local results, err = run_audit(packages)
+  restore()
+  MiniTest.expect.equality(calls, 2)
+  MiniTest.expect.equality(type(err), "string")
+  MiniTest.expect.equality(results[1].status, "failed")
+  MiniTest.expect.equality(results[101].status, "clean")
+end
+
+T["audit report excludes failed packages from scanned totals"] = function()
+  local output = require("pydeps.ui.output")
+  local original_show = output.show
+  local lines
+  output.show = function(_, content)
+    lines = content
+  end
+  local summary = require("pydeps.ui.security_audit").show({
+    { name = "a", version = "1", status = "clean", vulnerabilities = {} },
+    { name = "b", version = "1", status = "failed", error = "offline", vulnerabilities = {} },
+    { name = "c", version = "1", status = "not_scanned", vulnerabilities = {} },
+  })
+  output.show = original_show
+  MiniTest.expect.equality(summary.scanned_packages, 1)
+  MiniTest.expect.equality(summary.failed_packages, 1)
+  MiniTest.expect.equality(summary.not_scanned_packages, 1)
+  MiniTest.expect.equality(table.concat(lines, "\n"):find("No known vulnerabilities", 1, true), nil)
+end
+
+T["CVSS vectors remain unknown and retain original evaluations"] = function()
+  for _, evaluation in ipairs({
+    { type = "CVSS_V2", score = "AV:N/AC:L/Au:N/C:C/I:C/A:C" },
+    { type = "CVSS_V3", score = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" },
+    { type = "CVSS_V4", score = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N" },
+  }) do
+    require("pydeps.providers.osv")._clear_cache()
+    local _, restore = stub_requests({
+      { pattern = "querybatch$", body = '{"results":[{"vulns":[{"id":"TEST-1"}]}]}' },
+      { pattern = "/vulns/", body = vim.json.encode({ id = "TEST-1", severity = { evaluation } }) },
+    })
+    local results = run_audit({ { name = "demo", version = "1" } })
+    restore()
+    MiniTest.expect.equality(results[1].vulnerabilities[1].severity, "UNKNOWN")
+    MiniTest.expect.equality(results[1].vulnerabilities[1].severity_scores, { evaluation })
+  end
+end
+
+T["severity aggregation keeps highest recognized evaluation regardless of order"] = function()
+  for _, scores in ipairs({ { "8.0", "3.0" }, { "3.0", "8.0" } }) do
+    require("pydeps.providers.osv")._clear_cache()
+    local _, restore = stub_requests({
+      { pattern = "querybatch$", body = '{"results":[{"vulns":[{"id":"TEST-1"}]}]}' },
+      {
+        pattern = "/vulns/",
+        body = vim.json.encode({
+          id = "TEST-1",
+          database_specific = { severity = "LOW" },
+          severity = {
+            { type = "CVSS_V3", score = scores[1] },
+            { type = "CVSS_V3", score = scores[2] },
+            { type = "CVSS_V4", score = "CVSS:4.0/AV:N" },
+            { type = "OTHER", score = "10.0" },
+          },
+        }),
+      },
+    })
+    local results = run_audit({ { name = "demo", version = "1" } })
+    restore()
+    MiniTest.expect.equality(results[1].vulnerabilities[1].severity, "HIGH")
+  end
+end
+
+T["GitHub MODERATE advisories keep their level instead of degrading to unknown"] = function()
+  for _, case in ipairs({
+    { "MODERATE", "MODERATE" },
+    { "moderate", "MODERATE" },
+    { "CRITICAL", "CRITICAL" },
+    { "unrecognized", "UNKNOWN" },
+  }) do
+    require("pydeps.providers.osv")._clear_cache()
+    local _, restore = stub_requests({
+      { pattern = "querybatch$", body = '{"results":[{"vulns":[{"id":"TEST-1"}]}]}' },
+      {
+        pattern = "/vulns/",
+        body = vim.json.encode({
+          id = "TEST-1",
+          database_specific = { severity = case[1] },
+          severity = { { type = "CVSS_V3", score = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" } },
+        }),
+      },
+    })
+    local results = run_audit({ { name = "demo", version = "1" } })
+    restore()
+    MiniTest.expect.equality(results[1].vulnerabilities[1].severity, case[2])
+  end
+end
+
+T["moderate advisories sort above low ones"] = function()
+  require("pydeps.providers.osv")._clear_cache()
+  local _, restore = stub_requests({
+    { pattern = "querybatch$", body = '{"results":[{"vulns":[{"id":"LOW-1"},{"id":"MOD-1"}]}]}' },
+    {
+      pattern = "/vulns/LOW%-1",
+      body = vim.json.encode({ id = "LOW-1", database_specific = { severity = "LOW" } }),
+    },
+    {
+      pattern = "/vulns/MOD%-1",
+      body = vim.json.encode({ id = "MOD-1", database_specific = { severity = "MODERATE" } }),
+    },
+  })
+  local results = run_audit({ { name = "demo", version = "1" } })
+  restore()
+  MiniTest.expect.equality(results[1].vulnerabilities[1].id, "MOD-1")
+  MiniTest.expect.equality(results[1].vulnerabilities[2].id, "LOW-1")
 end
 
 return T

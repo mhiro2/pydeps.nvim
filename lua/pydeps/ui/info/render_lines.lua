@@ -81,7 +81,17 @@ local function get_deps_count(lock_data, dep_name)
     return "?"
   end
 
-  local pkg = lock_data.packages[dep_name]
+  local count = 0
+  local pkg
+  for _, candidate in pairs(lock_data.packages) do
+    if candidate.name == dep_name then
+      pkg = candidate
+      count = count + 1
+    end
+  end
+  if count > 1 then
+    return "?"
+  end
   if not pkg or not pkg.dependencies then
     return 0
   end

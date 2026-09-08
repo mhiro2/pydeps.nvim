@@ -131,6 +131,7 @@ T["render_lines shows dependency count and shortcuts when lock graph is availabl
       resolved = { [dep.name] = "1.0.0" },
       packages = {
         [dep.name] = {
+          name = dep.name,
           dependencies = { "dep1", "dep2", "dep3", "dep4" },
         },
       },
@@ -152,6 +153,7 @@ T["render_lines shows zero dependency count when package has no children"] = fun
       resolved = { [dep.name] = "1.0.0" },
       packages = {
         [dep.name] = {
+          name = dep.name,
           dependencies = {},
         },
       },

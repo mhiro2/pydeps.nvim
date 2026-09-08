@@ -402,4 +402,39 @@ T["virtual_text: does not leak helper globals"] = function()
   MiniTest.expect.equality(rawget(globals, "get_treesitter_ranges"), nil)
 end
 
+T["a marker keeps its locked version badge while the environment loads"] = function()
+  local virtual_text = setup_virtual_text()
+  local pyproject = require("pydeps.sources.pyproject")
+
+  helpers.setup_buffer({
+    "[project]",
+    "dependencies = [",
+    '  "plain>=1.0",',
+    "  \"marked>=1.0; python_version >= '3.8'\",",
+    "]",
+  })
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.bo[bufnr].filetype = "toml"
+  local deps = pyproject.parse(nil, nil, bufnr)
+  -- stub_env reports an empty environment, so the marker cannot be evaluated yet.
+  virtual_text.render(bufnr, deps, { plain = "1.0.0", marked = "2.0.0" }, { lockfile_missing = false })
+
+  local badges = {}
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(bufnr, virtual_text.ns, 0, -1, { details = true })) do
+    local chunks = (mark[4] or {}).virt_text
+    if chunks then
+      local text = {}
+      for _, chunk in ipairs(chunks) do
+        text[#text + 1] = chunk[1]
+      end
+      badges[mark[2]] = table.concat(text)
+    end
+  end
+
+  -- Both badges still carry the locked version; the marker only stays unevaluated.
+  MiniTest.expect.equality(badges[2] and badges[2]:match("%S+$"), "1.0.0")
+  MiniTest.expect.equality(badges[3] and badges[3]:match("%S+$"), "2.0.0")
+end
+
 return T

@@ -1,5 +1,7 @@
 ---@class PyDepsOSVAuditSummary
 ---@field scanned_packages integer
+---@field failed_packages integer
+---@field not_scanned_packages integer
 ---@field vulnerable_packages integer
 ---@field total_vulnerabilities integer
 
@@ -26,9 +28,19 @@ end
 ---@param results PyDepsOSVPackageResult[]
 ---@return PyDepsOSVAuditSummary
 local function summarize(results)
+  local scanned_packages = 0
+  local failed_packages = 0
+  local not_scanned_packages = 0
   local vulnerable_packages = 0
   local total_vulnerabilities = 0
   for _, result in ipairs(results or {}) do
+    if result.status == "clean" or result.status == "vulnerable" then
+      scanned_packages = scanned_packages + 1
+    elseif result.status == "failed" then
+      failed_packages = failed_packages + 1
+    else
+      not_scanned_packages = not_scanned_packages + 1
+    end
     local count = #(result.vulnerabilities or {})
     if count > 0 then
       vulnerable_packages = vulnerable_packages + 1
@@ -36,7 +48,9 @@ local function summarize(results)
     end
   end
   return {
-    scanned_packages = #(results or {}),
+    scanned_packages = scanned_packages,
+    failed_packages = failed_packages,
+    not_scanned_packages = not_scanned_packages,
     vulnerable_packages = vulnerable_packages,
     total_vulnerabilities = total_vulnerabilities,
   }
@@ -62,6 +76,8 @@ local function build_lines(results, opts)
   local lines = {
     "PyDeps Security Audit (OSV)",
     "Scanned packages: " .. summary.scanned_packages,
+    "Failed packages: " .. summary.failed_packages,
+    "Not scanned packages: " .. summary.not_scanned_packages,
     "Packages with vulnerabilities: " .. summary.vulnerable_packages,
     "Total vulnerabilities: " .. summary.total_vulnerabilities,
   }
@@ -73,9 +89,22 @@ local function build_lines(results, opts)
     table.insert(lines, "Warning: partial result (" .. opts.error .. ")")
   end
 
+  for _, result in ipairs(results or {}) do
+    if result.status == "failed" or result.status == "not_scanned" then
+      table.insert(
+        lines,
+        string.format("  %s@%s: %s (%s)", result.name, result.version, result.status, result.error or "no result")
+      )
+    end
+  end
+
   table.insert(lines, "")
   if summary.total_vulnerabilities == 0 then
-    table.insert(lines, "No known vulnerabilities found.")
+    if summary.failed_packages > 0 or summary.not_scanned_packages > 0 or (opts and opts.error) then
+      table.insert(lines, "Audit incomplete; unscanned packages may have vulnerabilities.")
+    else
+      table.insert(lines, "No known vulnerabilities found.")
+    end
     table.insert(lines, "")
     table.insert(lines, "Press q or <Esc> to close")
     return lines, summary
@@ -96,6 +125,11 @@ local function build_lines(results, opts)
     for _, vulnerability in ipairs(result.vulnerabilities) do
       table.insert(lines, format_vulnerability(vulnerability))
       table.insert(lines, "      " .. (vulnerability.summary or "(no summary)"))
+      for _, score in ipairs(vulnerability.severity_scores or {}) do
+        if type(score) == "table" and type(score.type) == "string" and type(score.score) == "string" then
+          table.insert(lines, "      " .. score.type .. ": " .. score.score)
+        end
+      end
     end
   end
 

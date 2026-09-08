@@ -7,17 +7,19 @@ local M = {}
 ---@param lock_data PyDepsLockfileData
 ---@return PyDepsAuditPackage[]
 local function collect_lock_packages(lock_data)
-  local packages = {}
-  for name, package in pairs(lock_data.packages or {}) do
-    if type(package) == "table" and package.version then
+  local packages, seen = {}, {}
+  for _, package in pairs(lock_data.packages or {}) do
+    local key = package.name .. "@" .. (package.version or "")
+    if package.version and not seen[key] then
+      seen[key] = true
       table.insert(packages, {
-        name = package.name or name,
+        name = package.name,
         version = package.version,
       })
     end
   end
   table.sort(packages, function(a, b)
-    return a.name < b.name
+    return a.name == b.name and a.version < b.version or a.name < b.name
   end)
   return packages
 end

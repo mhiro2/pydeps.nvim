@@ -1,266 +1,168 @@
 local MiniTest = require("mini.test")
 local helpers = require("tests.test_helpers")
-
 local T = helpers.create_test_set()
+local markers = require("pydeps.core.markers")
+local env = {
+  python_version = "3.11",
+  python_full_version = "3.11.2",
+  implementation_version = "3.11.2",
+  platform_release = "14.5.0",
+  platform_version = "#1 SMP Linux",
+  sys_platform = "linux",
+  platform_machine = "arm64",
+  platform_python_implementation = "CPython",
+  os_name = "posix",
+  extra = "Dev_Test",
+  group = "test",
+  dependency_group = "test",
+  extras = { "Dev_Test", "docs" },
+  dependency_groups = { "test" },
+}
 
-T["evaluate markers"] = function()
-  local markers = require("pydeps.core.markers")
-  local env = {
-    python_version = "3.11",
-    python_full_version = "3.11.2",
-    sys_platform = "linux",
-    platform_machine = "arm64",
-    os_name = "posix",
-    extra = "dev",
+T["standard comparisons and group selectors"] = function()
+  local cases = {
+    { "", true },
+    { "   ", true },
+    { "python_version >= '3.8'", true },
+    { "python_full_version < '3.10'", false },
+    { "'3.9' < python_version", true },
+    { "python_version === '3.11'", true },
+    { "python_version === '3.11.0'", false },
+    { "python_version ~= '3.10'", true },
+    { "python_version ~= '3.10.0'", false },
+    { "implementation_version >= '3.11'", true },
+    { "platform_release > '9.0'", true },
+    { "sys_platform == 'linux'", true },
+    { "sys_platform == 'Linux'", false },
+    { "sys_platform == ' linux '", false },
+    { "platform_python_implementation == 'CPython'", true },
+    { "sys_platform < 'win32'", false },
+    { "sys_platform <= 'linux'", true },
+    { "sys_platform >= 'darwin'", false },
+    { "sys_platform != 'win32'", true },
+    { "extra == 'dev.test'", true },
+    { "'dev-test' == extra", true },
+    { "group == 'test'", true },
+    { "dependency_group == 'dev'", false },
   }
-
-  MiniTest.expect.equality(markers.evaluate("", env), true)
-  MiniTest.expect.equality(markers.evaluate("python_version >= '3.8'", env), true)
-  MiniTest.expect.equality(markers.evaluate("python_full_version < '3.10'", env), false)
-  MiniTest.expect.equality(markers.evaluate("sys_platform == 'linux'", env), true)
-  MiniTest.expect.equality(markers.evaluate("os_name != 'nt' and sys_platform == 'linux'", env), true)
-  MiniTest.expect.equality(markers.evaluate("platform_machine in 'x86_64, arm64'", env), true)
-  MiniTest.expect.equality(markers.evaluate("extra == 'dev' or extra == 'docs'", env), true)
-  MiniTest.expect.equality(markers.evaluate("extra == 'docs'", env), false)
-end
-
-T["evaluate markers - case normalization"] = function()
-  local markers = require("pydeps.core.markers")
-  local env = {
-    sys_platform = "Linux",
-    os_name = "PoSiX",
-    extra = "DEV",
-  }
-
-  MiniTest.expect.equality(markers.evaluate("sys_platform == 'linux'", env), true)
-  MiniTest.expect.equality(markers.evaluate("os_name == 'posix'", env), true)
-  MiniTest.expect.equality(markers.evaluate("extra == 'dev'", env), true)
-  MiniTest.expect.equality(markers.evaluate("sys_platform in 'win32,LINUX'", env), true)
-  MiniTest.expect.equality(markers.evaluate("sys_platform not in 'win32,darwin'", env), true)
-end
-
-T["evaluate markers with dependency groups"] = function()
-  local markers = require("pydeps.core.markers")
-  local env_with_group = {
-    python_version = "3.11",
-    sys_platform = "linux",
-    os_name = "posix",
-    group = "test",
-    dependency_group = "test",
-  }
-
-  MiniTest.expect.equality(markers.evaluate("group == 'test'", env_with_group), true)
-  MiniTest.expect.equality(markers.evaluate("dependency_group == 'test'", env_with_group), true)
-  MiniTest.expect.equality(markers.evaluate("group == 'dev'", env_with_group), false)
-  MiniTest.expect.equality(markers.evaluate("dependency_group == 'dev'", env_with_group), false)
-  MiniTest.expect.equality(markers.evaluate("group == 'test' and python_version >= '3.8'", env_with_group), true)
-end
-
-T["evaluate markers - boundary conditions"] = function()
-  local markers = require("pydeps.core.markers")
-  local env = {
-    python_version = "3.11",
-    sys_platform = "linux",
-  }
-
-  -- nil marker should return true
   MiniTest.expect.equality(markers.evaluate(nil, env), true)
-
-  -- empty string marker should return true
-  MiniTest.expect.equality(markers.evaluate("", env), true)
-
-  -- whitespace-only marker should return true
-  MiniTest.expect.equality(markers.evaluate("   ", env), true)
-
-  -- nil env should return nil (evaluation incomplete)
-  MiniTest.expect.equality(markers.evaluate("python_version >= '3.8'", nil), nil)
-
-  -- empty env table should return nil (evaluation incomplete)
-  MiniTest.expect.equality(markers.evaluate("python_version >= '3.8'", {}), nil)
-
-  -- invalid syntax should return true (graceful degradation)
-  MiniTest.expect.equality(markers.evaluate("((((", env), true)
-
-  -- undefined variable in env should return nil (evaluation incomplete)
-  MiniTest.expect.equality(markers.evaluate("undefined_var == 'test'", env), nil)
-
-  -- and operator: nil (undefined var) on left, false (known condition) on right should return false (determined by right)
-  MiniTest.expect.equality(markers.evaluate("undefined_var == 'test' and sys_platform == 'win32'", env), false)
-
-  -- and operator: nil (undefined var) on left, true (known condition) on right should return nil (undetermined)
-  MiniTest.expect.equality(markers.evaluate("undefined_var == 'test' and sys_platform == 'linux'", env), nil)
-
-  -- and operator: nil on both sides should return nil
-  MiniTest.expect.equality(markers.evaluate("undefined_var1 == 'test' and undefined_var2 == 'test'", env), nil)
-
-  -- and operator: true (known condition) on left, nil (undefined var) on right should return nil
-  MiniTest.expect.equality(markers.evaluate("sys_platform == 'linux' and undefined_var == 'test'", env), nil)
-
-  -- or operator: nil (undefined var) on left, false (known condition) on right should return nil (undetermined)
-  MiniTest.expect.equality(markers.evaluate("undefined_var == 'test' or sys_platform == 'win32'", env), nil)
-
-  -- or operator: nil (undefined var) on left, true (known condition) on right should return true (determined by right)
-  MiniTest.expect.equality(markers.evaluate("undefined_var == 'test' or sys_platform == 'linux'", env), true)
-
-  -- or operator: nil on both sides should return nil
-  MiniTest.expect.equality(markers.evaluate("undefined_var1 == 'test' or undefined_var2 == 'test'", env), nil)
-
-  -- or operator: false (known condition) on left, nil (undefined var) on right should return nil
-  MiniTest.expect.equality(markers.evaluate("sys_platform == 'win32' or undefined_var == 'test'", env), nil)
+  for _, case in ipairs(cases) do
+    MiniTest.expect.equality({ markers.evaluate(case[1], env) }, { case[2] })
+  end
 end
 
-T["evaluate markers - escape sequences"] = function()
-  local markers = require("pydeps.core.markers")
-  local env = {
-    python_version = "3.11",
-    sys_platform = "linux",
+T["membership is case sensitive substring matching or normalized set membership"] = function()
+  local cases = {
+    { "sys_platform in 'win32'", false },
+    { "sys_platform in 'linux'", true },
+    { "sys_platform not in 'win32'", true },
+    { "sys_platform not in 'linux'", false },
+    { "sys_platform in 'LINUX'", false },
+    { "'lin' in sys_platform", true },
+    { "'nux' in sys_platform", true },
+    { "'' in sys_platform", true },
+    { "'arm' in platform_machine", true },
+    { "platform_machine in 'x86_64, arm64'", true },
+    { "'SMP' in platform_version", true },
+    { "'dev.test' in extras", true },
+    { "'dev' in extras", false },
+    { "'test' not in dependency_groups", false },
+    { "python_version in '3.9 3.11'", true },
+    { "python_version in '3.9 3.10'", false },
+    { "python_version not in '3.9 3.10'", true },
+    { "'3.11' in python_version", true },
+    { "python_full_version in '3.11.2 3.12.0'", true },
+    { "implementation_version in '3.10.0'", false },
+    { "platform_release in '14.5.0 15.0.0'", true },
   }
-
-  -- single quotes in double quotes
-  MiniTest.expect.equality(markers.evaluate('python_version >= "3.8"', env), true)
-
-  -- double quotes in single quotes
-  MiniTest.expect.equality(markers.evaluate("python_version >= '3.8'", env), true)
-
-  -- escaped quotes are treated literally (current behavior)
-  MiniTest.expect.equality(markers.evaluate([[python_version >= '3\.8']], env), false)
+  for _, case in ipairs(cases) do
+    MiniTest.expect.equality({ markers.evaluate(case[1], env) }, { case[2] })
+  end
 end
 
-T["evaluate markers - non-semantic versions"] = function()
-  local markers = require("pydeps.core.markers")
-  local env = {
-    python_version = "3.11.0",
+T["PEP 440 ordering handles prereleases epochs local labels and wildcard matching"] = function()
+  local cases = {
+    { "python_version > '3.11.0a1'", true },
+    { "python_version < '3.11.0a1'", false },
+    { "python_version >= '3.11.0rc1'", true },
+    { "python_version <= '3.11.0rc1'", false },
+    { "python_version >= '3.11.0.dev1'", true },
+    { "python_version <= '3.11.0.dev1'", false },
+    { "python_version > '3.10.0.post1'", true },
+    { "python_version < '3.11.0.post1'", true },
+    { "python_version == '3.11.0'", true },
+    { "python_version == '3.*'", true },
+    { "python_version != '3.11.*'", false },
+    { "python_version < '1!1.0'", true },
   }
-
-  -- Note: Current implementation uses simple string comparison for non-numeric parts
-  -- In dictionary order: "0" < "0a1" < "0.dev1" < "0post1" < "0rc1"
-  -- This means "3.11.0" < "3.11.0a1" in the current implementation
-  -- This differs from PEP 440 but reflects the current behavior
-
-  -- alpha versions (dictionary order: "0" < "0a1")
-  MiniTest.expect.equality(markers.evaluate("python_version >= '3.11.0a1'", env), false)
-  MiniTest.expect.equality(markers.evaluate("python_version <= '3.11.0a1'", env), true)
-
-  -- rc versions (dictionary order: "0" < "0rc1")
-  MiniTest.expect.equality(markers.evaluate("python_version >= '3.11.0rc1'", env), false)
-  MiniTest.expect.equality(markers.evaluate("python_version <= '3.11.0rc1'", env), true)
-
-  -- dev versions (dictionary order: "0" < "0.dev1")
-  MiniTest.expect.equality(markers.evaluate("python_version >= '3.11.0.dev1'", env), false)
-  MiniTest.expect.equality(markers.evaluate("python_version <= '3.11.0.dev1'", env), true)
-
-  -- post releases (dictionary order: "0" < "0post1")
-  -- Note: 3.11.0 > 3.10.0.post1 because 11 > 10 at the second position
-  MiniTest.expect.equality(markers.evaluate("python_version >= '3.10.0.post1'", env), true)
-  MiniTest.expect.equality(markers.evaluate("python_version <= '3.10.0.post1'", env), false)
-
-  -- Test with same version prefix
-  MiniTest.expect.equality(markers.evaluate("python_version >= '3.11.0.post1'", env), false)
-  MiniTest.expect.equality(markers.evaluate("python_version <= '3.11.0.post1'", env), true)
-
-  -- Final release is greater than pre-releases in PEP 440,
-  -- but current implementation uses dictionary order
-  -- Testing the actual current behavior
-  MiniTest.expect.equality(markers.evaluate("python_version > '3.11.0a1'", env), false)
-  MiniTest.expect.equality(markers.evaluate("python_version < '3.11.0a1'", env), true)
-  MiniTest.expect.equality(markers.evaluate("python_version > '3.10.0.post1'", env), true)
-  MiniTest.expect.equality(markers.evaluate("python_version < '3.10.0.post1'", env), false)
+  for _, case in ipairs(cases) do
+    MiniTest.expect.equality({ markers.evaluate(case[1], env) }, { case[2] })
+  end
+  MiniTest.expect.equality(markers.evaluate("python_version == '3.11'", { python_version = "3.11+vendor.1" }), true)
 end
 
-T["evaluate markers - complex expressions"] = function()
-  local markers = require("pydeps.core.markers")
-  local env = {
-    python_version = "3.11",
-    sys_platform = "linux",
-    os_name = "posix",
-    extra = "dev",
-  }
-
-  -- nested parentheses
-  MiniTest.expect.equality(markers.evaluate("((python_version >= '3.8'))", env), true)
-
-  -- multiple and/or
+T["parser rejects incomplete input unsupported tokens and unknown fields"] = function()
+  for _, expr in ipairs({
+    "((((",
+    "python_version",
+    "'literal'",
+    "python_version = '3.11'",
+    "python_version >=",
+    "python_version == '3.11",
+    "(python_version == '3.11'",
+    "python_version == '3.11')",
+    "python_version == '3.11' garbage",
+    "python_version == '3.11' and",
+    "python_version == '3.11' @",
+    "python_version == '3.11' == '3.11'",
+    "python_version == python_full_version",
+    "'3.11' == '3.11'",
+    "python_version ~= '3'",
+    "python_version >= 'not-a-version'",
+    "sys_platform ~= 'linux'",
+    "extras == 'docs'",
+    "extras in 'docs'",
+  }) do
+    MiniTest.expect.equality({ markers.evaluate(expr, env) }, { nil, "invalid" })
+  end
   MiniTest.expect.equality(
-    markers.evaluate("python_version >= '3.8' and (sys_platform == 'linux' or sys_platform == 'darwin')", env),
+    { markers.evaluate("sys_platform == 'linux'", { sys_platform = false }) },
+    { nil, "invalid" }
+  )
+  MiniTest.expect.equality({ markers.evaluate("unknown == 'value'", { unknown = "value" }) }, { nil, "unknown" })
+  MiniTest.expect.equality(
+    { markers.evaluate("unknown == 'value' or sys_platform == 'linux'", env) },
+    { nil, "unknown" }
+  )
+end
+
+T["boolean expressions preserve pending values and require valid whole syntax"] = function()
+  MiniTest.expect.equality({ markers.evaluate("python_version >= '3.8'", {}) }, { nil, "pending" })
+  local partial = { sys_platform = "linux" }
+  local cases = {
+    { "python_version >= '3.8' and sys_platform == 'win32'", false },
+    { "sys_platform == 'win32' and python_version >= '3.8'", false },
+    { "python_version >= '3.8' or sys_platform == 'linux'", true },
+    { "sys_platform == 'linux' or python_version >= '3.8'", true },
+  }
+  for _, case in ipairs(cases) do
+    MiniTest.expect.equality({ markers.evaluate(case[1], partial) }, { case[2] })
+  end
+  for _, expr in ipairs({
+    "python_version >= '3.8' and sys_platform == 'linux'",
+    "python_version >= '3.8' or sys_platform == 'win32'",
+  }) do
+    MiniTest.expect.equality({ markers.evaluate(expr, partial) }, { nil, "pending" })
+  end
+  MiniTest.expect.equality(
+    markers.evaluate("((python_version >= '3.8'))and(sys_platform == 'linux' or group == 'dev')", env),
     true
   )
-
-  -- not in operator
-  MiniTest.expect.equality(markers.evaluate("sys_platform not in 'win32,darwin'", env), true)
-
-  -- chained comparisons (evaluated as separate conditions)
-  MiniTest.expect.equality(markers.evaluate("python_version >= '3.8' and python_version < '4.0'", env), true)
-end
-
-T["evaluate markers - operator coverage"] = function()
-  local markers = require("pydeps.core.markers")
-  local env = {
-    python_version = "3.11",
-    python_full_version = "3.11.2",
-    sys_platform = "linux",
-  }
-
-  MiniTest.expect.equality(markers.evaluate("python_version != '3.10'", env), true)
-  MiniTest.expect.equality(markers.evaluate("python_full_version >= '3.11.2'", env), true)
-  MiniTest.expect.equality(markers.evaluate("python_version > '3.8'", env), true)
-  MiniTest.expect.equality(markers.evaluate("python_version < '3.8'", env), false)
-  MiniTest.expect.equality(markers.evaluate("sys_platform <= 'linux'", env), true)
-  MiniTest.expect.equality(markers.evaluate("sys_platform >= 'linux'", env), true)
-  MiniTest.expect.equality(markers.evaluate("sys_platform in ' win32 , linux '", env), true)
-  MiniTest.expect.equality(markers.evaluate("sys_platform not in ' linux , darwin '", env), false)
-end
-
-T["evaluate markers - escaped strings are treated as plain text"] = function()
-  local markers = require("pydeps.core.markers")
-  local env = {
-    sys_platform = "linux",
-  }
-
-  MiniTest.expect.equality(markers.evaluate([[sys_platform == 'lin\\ux']], env), false)
-  MiniTest.expect.equality(markers.evaluate([[sys_platform == "lin\\ux"]], env), false)
-end
-
-T["evaluate markers with extra and group combinations"] = function()
-  local markers = require("pydeps.core.markers")
-
-  -- Test with extra only
-  local env_extra = {
-    python_version = "3.11",
-    extra = "dev",
-  }
-  MiniTest.expect.equality(markers.evaluate("extra == 'dev'", env_extra), true)
-  MiniTest.expect.equality(markers.evaluate("extra == 'test'", env_extra), false)
-  MiniTest.expect.equality(markers.evaluate("python_version >= '3.8' and extra == 'dev'", env_extra), true)
-
-  -- Test with group only
-  local env_group = {
-    python_version = "3.11",
-    group = "test",
-  }
-  MiniTest.expect.equality(markers.evaluate("group == 'test'", env_group), true)
-  MiniTest.expect.equality(markers.evaluate("group == 'dev'", env_group), false)
-  MiniTest.expect.equality(markers.evaluate("python_version >= '3.8' and group == 'test'", env_group), true)
-
-  -- Test with both extra and group
-  local env_both = {
-    python_version = "3.11",
-    extra = "docs",
-    group = "test",
-  }
-  MiniTest.expect.equality(markers.evaluate("extra == 'docs' or group == 'test'", env_both), true)
-  MiniTest.expect.equality(markers.evaluate("extra == 'dev' or group == 'dev'", env_both), false)
+  MiniTest.expect.equality({ markers.evaluate("sys_platform == 'linux' or (", env) }, { nil, "invalid" })
   MiniTest.expect.equality(
-    markers.evaluate("(extra == 'docs' or group == 'test') and python_version >= '3.8'", env_both),
-    true
+    { markers.evaluate("sys_platform == 'linux' or python_version ~= '3'", env) },
+    { nil, "invalid" }
   )
-
-  -- Test without extra or group
-  local env_none = {
-    python_version = "3.11",
-  }
-  -- When extra is not set in env, marker evaluation should be incomplete
-  MiniTest.expect.equality(markers.evaluate("extra == 'dev'", env_none), nil)
-  MiniTest.expect.equality(markers.evaluate("group == 'test'", env_none), nil)
 end
 
 return T

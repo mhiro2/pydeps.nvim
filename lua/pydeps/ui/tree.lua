@@ -1,3 +1,4 @@
+local lockfile = require("pydeps.sources.lockfile")
 local M = {}
 
 ---@type table<integer, table<integer, string>>
@@ -179,7 +180,7 @@ function M.setup_keymaps(buf, lines, opts)
       -- Get resolved version from lockfile
       local cache = require("pydeps.core.cache")
       local lock_data, missing = cache.get_lockfile(root)
-      local resolved = lock_data and lock_data.resolved or {}
+      local resolved = lockfile.project(lock_data or {}, require("pydeps.core.env").get(root)).resolved
       local version = resolved[pkg]
 
       -- Create minimal dep object

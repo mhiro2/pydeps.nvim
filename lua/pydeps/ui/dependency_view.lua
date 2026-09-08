@@ -20,7 +20,8 @@ local M = {}
 ---@field missing_lockfile_text string
 ---@field lockfile_loading boolean
 ---@field unresolved boolean
----@field active boolean
+---@field active boolean?
+---@field marker_status? "invalid"|"unknown"|"pending"
 ---@field yanked boolean
 ---@field class? "ok"|"update"|"major"|"inactive"|"yanked"|"lock_mismatch"|"pin_not_found"|"searching"|"loading"|"unknown"
 ---@field pinned_version? string
@@ -127,7 +128,7 @@ function M.build(dep, opts)
   end
   local unresolved = resolved == nil and meta ~= nil and not lockfile_missing and not lockfile_loading
   local marker = ui_shared.extract_marker(dep.spec)
-  local active = status.is_active(dep, current_env)
+  local active, marker_status = status.is_active(dep, current_env)
 
   local yanked = opts.yanked
   if yanked == nil then
@@ -141,6 +142,7 @@ function M.build(dep, opts)
 
   local classified = status.classify({
     active = active,
+    marker_status = marker_status,
     yanked = yanked,
     spec = dep.spec,
     meta = meta,
@@ -152,12 +154,14 @@ function M.build(dep, opts)
   })
   local base_classified = status.classify({
     active = active,
+    marker_status = marker_status,
     spec = dep.spec,
     resolved = resolved,
   })
 
   local status_kind, status_text, status_icon, lock_status, show_latest_warning =
     summarize_status(classified.class, resolved)
+  status_text = ({ invalid = "invalid marker", unknown = "unknown marker field" })[marker_status] or status_text
 
   return {
     dep = dep,
@@ -175,6 +179,7 @@ function M.build(dep, opts)
     lockfile_loading = lockfile_loading,
     unresolved = unresolved,
     active = active,
+    marker_status = marker_status,
     yanked = yanked,
     class = classified.class,
     pinned_version = classified.pinned_version,

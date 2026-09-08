@@ -1,3 +1,4 @@
+local lockfile = require("pydeps.sources.lockfile")
 ---@class PyDepsCompletionContext
 ---@field kind string
 ---@field name? string
@@ -60,7 +61,7 @@ local function local_package_names(bufnr)
   local resolved = {}
   if root then
     local lock_data = cache.get_lockfile(root)
-    resolved = lock_data.resolved or {}
+    resolved = lockfile.project(lock_data, require("pydeps.core.env").get(root)).resolved
   end
   for name in pairs(resolved) do
     table.insert(names, name)
