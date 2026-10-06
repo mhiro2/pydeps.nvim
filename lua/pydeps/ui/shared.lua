@@ -11,6 +11,7 @@ M.MAX_CONCURRENT_PYPI_REQUESTS = 5
 
 ---@class PyDepsBufferDebouncer
 ---@field clear fun(bufnr: integer)
+---@field clear_all fun()
 ---@field schedule fun(bufnr: integer, callback: fun())
 
 ---Create a per-buffer debouncer that coalesces quick successive render requests.
@@ -59,8 +60,15 @@ function M.new_buffer_debouncer(delay_ms)
     end)
   end
 
+  local function clear_all()
+    for bufnr in pairs(debounce_state) do
+      clear(bufnr)
+    end
+  end
+
   return {
     clear = clear,
+    clear_all = clear_all,
     schedule = schedule,
   }
 end
