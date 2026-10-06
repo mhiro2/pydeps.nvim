@@ -55,10 +55,7 @@ local function marker_active(expressions, env)
   return false
 end
 
----Project a universal lock without guessing when markers or identities are ambiguous.
----Extras and groups select optional edges; the universal package table is never filtered.
-function M.project(data, env)
-  env = env or {}
+local function compute_projection(data, env)
   local selected, resolved, ambiguous = {}, {}, {}
   local candidates = {}
   for id, pkg in pairs(data.packages or {}) do
@@ -116,6 +113,29 @@ function M.project(data, env)
   return { resolved = resolved, selected = selected, ambiguous = ambiguous, graph = graph }
 end
 
+-- Projections keyed by lock data identity, then by environment contents.
+-- Parsed lock data is immutable, so a projection stays valid until the lock is re-parsed.
+local projections = setmetatable({}, { __mode = "k" })
+
+---Project a universal lock without guessing when markers or identities are ambiguous.
+---Extras and groups select optional edges; the universal package table is never filtered.
+---Results are memoized per lock data and environment; callers must not mutate them.
+function M.project(data, env)
+  env = env or {}
+  local env_key = vim.json.encode(env)
+  local by_env = projections[data]
+  if not by_env then
+    by_env = {}
+    projections[data] = by_env
+  end
+  local cached = by_env[env_key]
+  if not cached then
+    cached = compute_projection(data, env)
+    by_env[env_key] = cached
+  end
+  return cached
+end
+
 ---Collect all locked versions per name for environment-independent lock diffs.
 function M.snapshot(data)
   local versions = {}
@@ -134,9 +154,38 @@ function M.snapshot(data)
   return result
 end
 
+---Advance bracket depth across `text`, ignoring brackets inside strings, so a
+---multi-line value is decoded once when it closes instead of on every line.
+---@param text string
+---@param scan { depth: integer, quote?: string }
+local function scan_collection(text, scan)
+  local pos = 1
+  while true do
+    pos = text:find(scan.quote and "[\\\"']" or "[\"'%[%]{}]", pos)
+    if not pos then
+      return
+    end
+    local char = text:sub(pos, pos)
+    if scan.quote then
+      if char == "\\" and scan.quote == '"' then
+        pos = pos + 1
+      elseif char == scan.quote then
+        scan.quote = nil
+      end
+    elseif char == '"' or char == "'" then
+      scan.quote = char
+    elseif char == "[" or char == "{" then
+      scan.depth = scan.depth + 1
+    elseif char == "]" or char == "}" then
+      scan.depth = scan.depth - 1
+    end
+    pos = pos + 1
+  end
+end
+
 local function parse_lines(lines)
   local packages, current, section = {}, nil, nil
-  local pending_key, pending_text
+  local pending_key, pending_parts, pending_scan
   local function finish()
     if current and current.name then
       current.id = identity(current)
@@ -175,18 +224,21 @@ local function parse_lines(lines)
     local header = line:match("^%s*%[%[([^%]]+)%]%]%s*$")
     local table_header = line:match("^%s*%[([^%]]+)%]%s*$")
     if header or table_header then
-      pending_key, pending_text = nil, nil
+      pending_key, pending_parts, pending_scan = nil, nil, nil
       section = header or table_header
       if header == "package" then
         finish()
         current = { source = {}, dependencies = {}, resolution_markers = {} }
       end
     elseif pending_key then
-      pending_text = pending_text .. "\n" .. line
-      local parsed = value.parse(pending_text)
-      if parsed ~= nil then
-        assign(pending_key, parsed)
-        pending_key, pending_text = nil, nil
+      pending_parts[#pending_parts + 1] = line
+      scan_collection(line, pending_scan)
+      if pending_scan.depth <= 0 then
+        local parsed = value.parse(table.concat(pending_parts, "\n"))
+        if parsed ~= nil then
+          assign(pending_key, parsed)
+        end
+        pending_key, pending_parts, pending_scan = nil, nil, nil
       end
     elseif
       current
@@ -209,11 +261,15 @@ local function parse_lines(lines)
           or section ~= "package"
         )
       then
-        local parsed = value.parse(text)
-        if parsed ~= nil then
-          assign(key, parsed)
-        elseif text:match("^%[") or text:match("^{") then
-          pending_key, pending_text = key, text
+        local scan = { depth = 0 }
+        scan_collection(text, scan)
+        if scan.depth > 0 then
+          pending_key, pending_parts, pending_scan = key, { text }, scan
+        else
+          local parsed = value.parse(text)
+          if parsed ~= nil then
+            assign(key, parsed)
+          end
         end
       end
     end
@@ -227,7 +283,7 @@ local function parse_lines(lines)
   for _, ids in pairs(data.by_name) do
     table.sort(ids)
   end
-  local projection = M.project(data)
+  local projection = compute_projection(data, {})
   data.resolved, data.graph = projection.resolved, projection.graph
   return data
 end
