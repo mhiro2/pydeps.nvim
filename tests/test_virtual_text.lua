@@ -437,4 +437,57 @@ T["a marker keeps its locked version badge while the environment loads"] = funct
   MiniTest.expect.equality(badges[3] and badges[3]:match("%S+$"), "2.0.0")
 end
 
+T["a failed PyPI fetch renders once without re-requesting"] = function()
+  stub_env()
+  local failed = {}
+  local get_calls = 0
+  package.loaded["pydeps.providers.pypi"] = {
+    get_cached = function(name)
+      return nil, failed[name] == true
+    end,
+    get = function(name, cb)
+      get_calls = get_calls + 1
+      failed[name] = true
+      cb(nil)
+    end,
+    is_yanked = function()
+      return false
+    end,
+  }
+  require("pydeps.core.jobs")._reset()
+  package.loaded["pydeps.ui.virtual_text"] = nil
+  package.loaded["pydeps.ui.diagnostics"] = nil
+  require("pydeps.config").setup({ enable_diagnostics = true })
+  local virtual_text = require("pydeps.ui.virtual_text")
+  local diagnostics = require("pydeps.ui.diagnostics")
+  local pyproject = require("pydeps.sources.pyproject")
+
+  helpers.setup_buffer({
+    "[project]",
+    "dependencies = [",
+    '  "offline>=1.0",',
+    "]",
+  })
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.bo[bufnr].filetype = "toml"
+  local deps = pyproject.parse(nil, nil, bufnr)
+  local original_render = virtual_text.render
+  local renders = 0
+  virtual_text.render = function(...)
+    renders = renders + 1
+    return original_render(...)
+  end
+  virtual_text.render(bufnr, deps, {}, { lockfile_missing = false })
+  diagnostics.render(bufnr, deps, {}, { lockfile_missing = false })
+  vim.wait(300, function()
+    return false
+  end, 10)
+  virtual_text.render = original_render
+  virtual_text.clear(bufnr)
+
+  MiniTest.expect.equality(get_calls, 1)
+  MiniTest.expect.equality(renders, 2)
+end
+
 return T

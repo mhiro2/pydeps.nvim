@@ -40,8 +40,9 @@ local search_client = search.new({
 
 local M = {}
 
+---Return cached metadata and whether fetching is suppressed (invalid name or failure backoff).
 ---@param name string
----@return PyDepsPyPIMeta?
+---@return PyDepsPyPIMeta?, boolean
 function M.get_cached(name)
   return metadata_client.get_cached(name)
 end
