@@ -144,7 +144,13 @@ local function compute_diagnostics(bufnr, deps, resolved, opts)
           diagnostics,
           make_diag(dep, "resolved version is yanked on PyPI", config.options.diagnostic_severity.yanked)
         )
-      elseif not skip_fetch and not jobs.is_stopping() and not view.meta and not pending[dep.name] then
+      elseif
+        not skip_fetch
+        and not jobs.is_stopping()
+        and not view.meta
+        and not pending[dep.name]
+        and not select(2, pypi.get_cached(dep.name))
+      then
         pending[dep.name] = true
         limiter:enqueue(function(done)
           if jobs.is_stopping() then
@@ -152,10 +158,13 @@ local function compute_diagnostics(bufnr, deps, resolved, opts)
             done()
             return
           end
-          pypi.get(dep.name, function()
+          pypi.get(dep.name, function(data)
             pending[dep.name] = nil
             done()
-            schedule_render(bufnr, deps, resolved, opts)
+            -- Failures leave diagnostics unchanged, so only new metadata needs a render.
+            if data then
+              schedule_render(bufnr, deps, resolved, opts)
+            end
           end)
         end)
       end

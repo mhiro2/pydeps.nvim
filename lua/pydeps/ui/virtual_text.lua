@@ -489,9 +489,13 @@ local function build_dependency_views(
   local line_cache = {}
 
   for _, dep in ipairs(deps or {}) do
-    -- Queue PyPI request if needed
-    if not skip_fetch and ok_pypi and not pypi.get_cached(dep.name) and not pending[dep.name] then
-      queue_pypi_request(bufnr, dep.name, deps, resolved, { lockfile_missing = lockfile_missing })
+    -- Queue PyPI request if needed; skip names in failure backoff so the
+    -- post-fetch re-render does not immediately request them again.
+    if not skip_fetch and ok_pypi and not pending[dep.name] then
+      local meta, unavailable = pypi.get_cached(dep.name)
+      if not meta and not unavailable then
+        queue_pypi_request(bufnr, dep.name, deps, resolved, { lockfile_missing = lockfile_missing })
+      end
     end
 
     local view =

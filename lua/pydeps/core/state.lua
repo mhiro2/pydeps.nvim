@@ -6,6 +6,7 @@ local jobs = require("pydeps.core.jobs")
 local project = require("pydeps.core.project")
 local diagnostics = require("pydeps.ui.diagnostics")
 local info = require("pydeps.ui.info")
+local ui_shared = require("pydeps.ui.shared")
 local virtual_text = require("pydeps.ui.virtual_text")
 local uv = vim.uv
 
@@ -26,6 +27,9 @@ local refresh_timers = {}
 ---@type table<integer, integer>
 local refresh_ticks = {}
 
+-- PyPI responses arrive one package at a time; coalesce them into one refresh per buffer.
+local pypi_refresh = ui_shared.new_buffer_debouncer(50)
+
 ---@param name string
 local function refresh_buffers_with_dep(name)
   if not name or name == "" then
@@ -37,7 +41,9 @@ local function refresh_buffers_with_dep(name)
     if vim.api.nvim_buf_is_loaded(bufnr) and buffer_context.is_pyproject_buf(bufnr) then
       for _, dep in ipairs(buffer_context.get_deps(bufnr) or {}) do
         if dep.name == target then
-          M.refresh(bufnr)
+          pypi_refresh.schedule(bufnr, function()
+            M.refresh(bufnr)
+          end)
           break
         end
       end
@@ -63,12 +69,14 @@ local function clear_refresh_timer(bufnr)
     refresh_timers[bufnr] = nil
   end
   refresh_ticks[bufnr] = nil
+  pypi_refresh.clear(bufnr)
 end
 
 local function clear_all_timers()
   for bufnr in pairs(refresh_timers) do
     clear_refresh_timer(bufnr)
   end
+  pypi_refresh.clear_all()
 end
 
 ---@param bufnr integer

@@ -229,4 +229,57 @@ T["lock values preserve escaped quotes and Unicode in source identities"] = func
   })
 end
 
+T["multi-line arrays decode once and ignore brackets inside strings"] = function()
+  local lockfile = require("pydeps.sources.lockfile")
+  local value = require("pydeps.sources.lock_value")
+  local lines = {
+    "[[package]]",
+    'name = "app"',
+    'version = "1.0"',
+    "dependencies = [",
+  }
+  for i = 1, 200 do
+    lines[#lines + 1] = string.format('  { name = "dep%d", marker = "extra == \'a]{\'" },', i)
+  end
+  vim.list_extend(lines, {
+    "]",
+    "",
+    "[package.optional-dependencies]",
+    "speed = [",
+    '  { name = "dep1", extra = ["fast"] },',
+    "]",
+  })
+  local path = helpers.write_temp_file(lines, ".lock")
+
+  local original_parse = value.parse
+  local calls = 0
+  value.parse = function(text)
+    calls = calls + 1
+    return original_parse(text)
+  end
+  local ok, data = pcall(lockfile.parse_full, path)
+  value.parse = original_parse
+  helpers.cleanup_temp_file(path)
+
+  MiniTest.expect.equality(ok, true)
+  local app = package_named(data, "app")
+  MiniTest.expect.equality(#app.dependencies, 201)
+  MiniTest.expect.equality(app.dependencies[200].name, "dep200")
+  MiniTest.expect.equality(app.dependencies[200].marker, "extra == 'a]{'")
+  MiniTest.expect.equality(app.dependencies[201].group, "speed")
+  MiniTest.expect.equality(app.dependencies[201].extra, { "fast" })
+  -- One decode per key, not one per accumulated line.
+  MiniTest.expect.equality(calls, 4)
+end
+
+T["projections are reused per lock data and environment"] = function()
+  local lockfile = require("pydeps.sources.lockfile")
+  local data = lockfile.parse_full("tests/fixtures/fork.uv.lock")
+  local linux = lockfile.project(data, { sys_platform = "linux" })
+  MiniTest.expect.equality(lockfile.project(data, { sys_platform = "linux" }) == linux, true)
+  MiniTest.expect.equality(lockfile.project(data, { sys_platform = "win32" }) == linux, false)
+  local reparsed = lockfile.parse_full("tests/fixtures/fork.uv.lock")
+  MiniTest.expect.equality(lockfile.project(reparsed, { sys_platform = "linux" }) == linux, false)
+end
+
 return T

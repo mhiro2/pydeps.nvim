@@ -101,8 +101,10 @@ T["pypi get: keeps decoded payload when stderr has chunks"] = function()
   vim.fn.jobstart = function(_, opts)
     vim.schedule(function()
       opts.on_stdout(nil, { '{"info":{"version":"1.2.3"}}' })
-      opts.on_stderr(nil, { "first error" })
-      opts.on_stderr(nil, { "" })
+      if opts.on_stderr then
+        opts.on_stderr(nil, { "first error" })
+        opts.on_stderr(nil, { "" })
+      end
       opts.on_exit(nil, 0, nil)
     end)
     return 1
@@ -374,6 +376,53 @@ T["pypi search: treats unparseable payload as failure"] = function()
   vim.fn.executable = original_executable
   vim.fn.jobstart = original_jobstart
   vim.notify = original_notify
+end
+
+T["pypi get: failed fetch enters backoff instead of re-requesting"] = function()
+  package.loaded["pydeps.providers.pypi"] = nil
+  local pypi = require("pydeps.providers.pypi")
+
+  local original_executable = vim.fn.executable
+  local original_jobstart = vim.fn.jobstart
+  local jobstart_calls = 0
+  local first_result = "unset"
+  local second_result = "unset"
+
+  vim.fn.executable = function(cmd)
+    if cmd == "curl" then
+      return 1
+    end
+    return 0
+  end
+  vim.fn.jobstart = function(_, opts)
+    jobstart_calls = jobstart_calls + 1
+    vim.schedule(function()
+      opts.on_exit(nil, 22, nil)
+    end)
+    return 1
+  end
+
+  pypi.get("missing-pkg", function(data)
+    first_result = data
+  end)
+  vim.wait(200, function()
+    return first_result ~= "unset"
+  end, 10)
+
+  local cached, unavailable = pypi.get_cached("missing-pkg")
+  pypi.get("missing-pkg", function(data)
+    second_result = data
+  end)
+
+  vim.fn.executable = original_executable
+  vim.fn.jobstart = original_jobstart
+
+  MiniTest.expect.equality(first_result, nil)
+  MiniTest.expect.equality(cached, nil)
+  MiniTest.expect.equality(unavailable, true)
+  MiniTest.expect.equality(second_result, nil)
+  MiniTest.expect.equality(jobstart_calls, 1)
+  MiniTest.expect.equality(select(2, pypi.get_cached("../invalid-name")), true)
 end
 
 return T

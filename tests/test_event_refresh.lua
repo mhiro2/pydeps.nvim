@@ -102,4 +102,18 @@ T["event refresh updates all buffers"] = function()
   MiniTest.expect.equality(ok2, true)
 end
 
+T["bursts of PyPI updates coalesce into one refresh per buffer"] = function()
+  local buf = make_pyproject_buf("/tmp/c/pyproject.toml")
+  vim.b[buf].render_count = 0
+
+  for _ = 1, 5 do
+    vim.api.nvim_exec_autocmds("User", { pattern = "PyDepsPyPIUpdated", data = { name = "requests" } })
+  end
+  vim.wait(200, function()
+    return false
+  end, 10)
+
+  MiniTest.expect.equality(vim.b[buf].render_count, 1)
+end
+
 return T

@@ -8,7 +8,7 @@ local uv = vim.uv
 local M = {}
 
 ---@param opts? { notify_once?: fun(msg: string), on_update?: fun(name: string) }
----@return { get_cached: fun(name: string): PyDepsPyPIMeta?, get: fun(name: string, cb?: fun(data: PyDepsPyPIMeta?)) }
+---@return { get_cached: fun(name: string): PyDepsPyPIMeta?, boolean, get: fun(name: string, cb?: fun(data: PyDepsPyPIMeta?)) }
 function M.new(opts)
   opts = opts or {}
 
@@ -55,13 +55,11 @@ function M.new(opts)
   local function run_request(cmd, name)
     local normalized = shared.normalize(name)
     local stdout = {}
-    local stderr = {}
     local completed = false
 
     ---@param decoded? table
-    ---@param had_error boolean
     ---@return nil
-    local function finish(decoded, had_error)
+    local function finish(decoded)
       if completed then
         return
       end
@@ -70,11 +68,8 @@ function M.new(opts)
       util.safe_close_timer(timers[normalized])
       timers[normalized] = nil
 
-      if decoded then
-        set_cache(name, decoded, false)
-      elseif had_error then
-        set_cache(name, nil, true)
-      end
+      -- Any outcome without metadata enters backoff so callers stop re-requesting.
+      set_cache(name, decoded, decoded == nil)
 
       local callbacks = pending[normalized] or {}
       pending[normalized] = nil
@@ -82,32 +77,27 @@ function M.new(opts)
         for _, callback in ipairs(callbacks) do
           callback(decoded)
         end
+        -- Emit on failure too: other buffers showing this package as loading
+        -- only re-render through the update event.
         emit_update(name)
       end)
     end
 
     local job_id = vim.fn.jobstart(cmd, {
       stdout_buffered = true,
-      stderr_buffered = true,
       on_stdout = function(_, data)
         if data then
           vim.list_extend(stdout, data)
         end
       end,
-      on_stderr = function(_, data)
-        if data then
-          vim.list_extend(stderr, data)
-        end
-      end,
-      on_exit = function(self_id, code, _)
+      on_exit = function(self_id, _, _)
         jobs.untrack(self_id)
         local payload = table.concat(stdout, "\n")
-        local err = table.concat(stderr, "\n")
         local decoded = nil
         if payload ~= "" then
           decoded = shared.decode_json(payload)
         end
-        finish(decoded, code ~= 0 or err ~= "")
+        finish(decoded)
       end,
     })
 
@@ -121,7 +111,7 @@ function M.new(opts)
         vim.schedule(function()
           vim.fn.jobstop(job_id)
         end)
-        finish(nil, true)
+        finish(nil)
       end)
       return
     end
@@ -130,16 +120,21 @@ function M.new(opts)
       string.format("pydeps: Failed to fetch package '%s' from PyPI. Please check your internet connection.", name),
       vim.log.levels.ERROR
     )
-    finish(nil, true)
+    finish(nil)
   end
 
   local client = {}
 
+  ---Return cached metadata and whether fetching is currently pointless
+  ---(invalid name or failure backoff), so callers can avoid request loops.
   ---@param name string
-  ---@return PyDepsPyPIMeta?
+  ---@return PyDepsPyPIMeta?, boolean
   function client.get_cached(name)
-    local data, _ = cached_entry(name)
-    return data
+    local normalized = shared.normalize(name)
+    if not shared.is_valid_package_name(normalized) then
+      return nil, true
+    end
+    return cached_entry(normalized)
   end
 
   ---@param name string
@@ -206,6 +201,7 @@ function M.new(opts)
     if opts.notify_once then
       opts.notify_once("pydeps: curl/python not found; PyPI features disabled")
     end
+    set_cache(normalized, nil, true)
     local callbacks = pending[normalized] or {}
     pending[normalized] = nil
     for _, callback in ipairs(callbacks) do
