@@ -2,6 +2,8 @@ local lockfile = require("pydeps.sources.lockfile")
 ---@class PyDepsCompletionContext
 ---@field kind string
 ---@field name? string
+---@field marker_field? string
+---@field quote? string Quote to wrap an inserted marker value in, when the user has not typed one
 ---@field prefix string
 ---@field token_prefix string
 ---@field range table
@@ -10,6 +12,7 @@ local config = require("pydeps.config")
 local completion_items = require("pydeps.completion.items")
 local completion_scan = require("pydeps.completion.scan")
 local cache = require("pydeps.core.cache")
+local markers = require("pydeps.core.markers")
 local project = require("pydeps.core.project")
 local util = require("pydeps.util")
 local pypi = require("pydeps.providers.pypi")
@@ -90,19 +93,59 @@ local function collect_local_groups(bufnr, prefix)
   return values
 end
 
----@param prefix string
----@return string
+-- Values commonly compared against marker fields. The current environment's
+-- value is offered as well, which covers version-like fields.
+local marker_values = {
+  os_name = { "nt", "posix" },
+  sys_platform = { "cygwin", "darwin", "emscripten", "linux", "win32" },
+  platform_system = { "Darwin", "Emscripten", "Linux", "Windows" },
+  platform_machine = { "AMD64", "aarch64", "arm64", "x86_64" },
+  platform_python_implementation = { "CPython", "PyPy" },
+  implementation_name = { "cpython", "pypy" },
+}
+
+---Classify the marker expression before the cursor.
+---@param prefix string requirement text before the cursor, containing `;`
+---@return string kind
+---@return string? field marker field whose value is being completed
+---@return boolean? quoted whether the value already has an opening quote
 local function marker_context(prefix)
-  if prefix:match("extra%s*[%!=<>]*%s*['\"]?[%w%._%-]*$") then
-    return "marker_extra"
+  local expr = prefix:match(";(.*)$")
+  -- An operand may open with a TOML-escaped quote (`\"`) inside a basic string.
+  for _, operator in ipairs({ "%s*[=!<>~]+%s*", "%s+not%s+in%s*", "%s+in%s*" }) do
+    local field, quote = expr:match("([%w_]+)" .. operator .. "(\\?['\"]?)[^'\"\\]*$")
+    if field then
+      return "marker_value", field, quote ~= ""
+    end
   end
+  local before = (expr:gsub("[%w_]*$", ""))
   if
-    prefix:match("group%s*[%!=<>]*%s*['\"]?[%w%._%-]*$")
-    or prefix:match("dependency_group%s*[%!=<>]*%s*['\"]?[%w%._%-]*$")
+    before:match("^%s*$")
+    or before:match("%(%s*$")
+    or before:match("[%s%)'\"]and%s+$")
+    or before:match("[%s%)'\"]or%s+$")
   then
-    return "marker_group"
+    return "marker_field"
   end
   return "marker"
+end
+
+---@param bufnr integer
+---@param field string
+---@return string[] values, string detail, string source
+local function marker_value_candidates(bufnr, field)
+  if field == "extra" then
+    return collect_local_groups(bufnr, "optional:"), "marker extra", "local"
+  end
+  if field == "group" or field == "dependency_group" then
+    return collect_local_groups(bufnr, "group:"), "marker group", "local"
+  end
+  local values = vim.list_extend({}, marker_values[field] or {})
+  local current = require("pydeps.core.env").get(project.find_root(bufnr))[field]
+  if type(current) == "string" then
+    values[#values + 1] = current
+  end
+  return unique(values), "marker value", field
 end
 
 ---@param bufnr integer
@@ -133,9 +176,9 @@ local function detect_context(bufnr, cursor)
   end
   local prefix = value:sub(1, rel - 1)
   local name = util.parse_requirement_name(value)
-  local kind = nil
+  local kind, marker_field, quoted = nil, nil, nil
   if prefix:find(";") then
-    kind = marker_context(prefix)
+    kind, marker_field, quoted = marker_context(prefix)
   elseif prefix:find("%[") and not prefix:find("%]") then
     kind = "extra"
   elseif prefix:find("[<>=!~]") then
@@ -147,6 +190,9 @@ local function detect_context(bufnr, cursor)
   local pattern = "[%w%._%-]"
   if kind == "version" then
     pattern = "[%w%._%-%+%*]"
+  elseif kind == "marker_value" and quoted then
+    -- Replace the whole quoted operand, which may contain spaces (e.g. platform_version).
+    pattern = "[^'\"\\]"
   end
   local token_left, token_right = completion_scan.token_range(value, rel, pattern)
   local start_col = ctx.start_col + token_left
@@ -155,6 +201,8 @@ local function detect_context(bufnr, cursor)
   return {
     kind = kind,
     name = name,
+    marker_field = marker_field,
+    quote = (kind == "marker_value" and not quoted) and (ctx.quote == '"' and "'" or '"') or nil,
     prefix = prefix,
     token_prefix = token_prefix,
     range = make_range(line_num, start_col, end_col),
@@ -233,21 +281,26 @@ function M.complete(bufnr, cursor, callback)
     return
   end
 
-  if ctx.kind == "marker_extra" then
-    local extras = collect_local_groups(bufnr, "optional:")
-    local item_meta = completion_items.uniform_meta(extras, "marker extra", "local")
+  if ctx.kind == "marker_field" then
+    local fields = markers.field_names()
+    local item_meta = completion_items.uniform_meta(fields, "marker field")
     callback({
-      items = completion_items.as_items(extras, ctx.range, completion_items.kinds.EnumMember, item_meta),
+      items = completion_items.as_items(fields, ctx.range, completion_items.kinds.Property, item_meta),
       isIncomplete = false,
     })
     return
   end
 
-  if ctx.kind == "marker_group" then
-    local groups = collect_local_groups(bufnr, "group:")
-    local item_meta = completion_items.uniform_meta(groups, "marker group", "local")
+  if ctx.kind == "marker_value" then
+    local values, detail, source = marker_value_candidates(bufnr, ctx.marker_field)
+    local item_meta = completion_items.uniform_meta(values, detail, source)
+    if ctx.quote then
+      for value, meta in pairs(item_meta) do
+        meta.new_text = ctx.quote .. value .. ctx.quote
+      end
+    end
     callback({
-      items = completion_items.as_items(groups, ctx.range, completion_items.kinds.EnumMember, item_meta),
+      items = completion_items.as_items(values, ctx.range, completion_items.kinds.EnumMember, item_meta),
       isIncomplete = false,
     })
     return

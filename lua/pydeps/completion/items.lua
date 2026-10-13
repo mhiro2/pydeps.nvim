@@ -3,6 +3,7 @@
 ---@field label_details? table
 ---@field documentation? string|table
 ---@field insert_text? string
+---@field new_text? string
 ---@field sort_text? string
 
 ---@class PyDepsCompletionPackageSource
@@ -15,6 +16,7 @@ local lsp_completion_item_kind = vim.lsp and vim.lsp.protocol and vim.lsp.protoc
 
 M.kinds = {
   Module = lsp_completion_item_kind.Module or 9,
+  Property = lsp_completion_item_kind.Property or 10,
   Value = lsp_completion_item_kind.Value or 12,
   EnumMember = lsp_completion_item_kind.EnumMember or 20,
 }
@@ -75,7 +77,7 @@ local function make_item(label, range, kind, meta)
     label = label,
     kind = kind,
     textEdit = {
-      newText = label,
+      newText = meta and meta.new_text or label,
       range = range,
     },
   }

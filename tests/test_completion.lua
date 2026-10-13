@@ -268,6 +268,96 @@ T["completion edits replace only the token at the cursor"] = function()
   end)
 end
 
+T["completion offers marker fields and values"] = function()
+  with_pypi_stub(edit_pypi_stub, function()
+    local dir = create_project({
+      "[project]",
+      "dependencies = [",
+      "  ",
+      "]",
+      "",
+      "[project.optional-dependencies]",
+      'dev = ["pytest"]',
+      "",
+      "[dependency-groups]",
+      'test = ["coverage"]',
+    })
+    local bufnr = vim.api.nvim_get_current_buf()
+
+    ---@param marked string
+    ---@return table[]
+    local function items_at(marked)
+      local col = marked:find("|", 1, true) - 1
+      vim.api.nvim_buf_set_lines(bufnr, 2, 3, false, { marked:sub(1, col) .. marked:sub(col + 2) })
+      return run_complete(bufnr, 3, col).items or {}
+    end
+
+    -- fields right after `;`, while typing, and after a boolean operator
+    for _, marked in ipairs({
+      '  "requests; |",',
+      '  "requests;|",',
+      '  "requests; py|",',
+      "  \"requests; python_version >= '3.8' and |\",",
+      '  "requests; (|",',
+    }) do
+      local field = find_item(items_at(marked), "platform_system")
+      MiniTest.expect.no_equality(field, nil)
+      MiniTest.expect.equality(field.detail, "marker field")
+    end
+
+    -- nothing after a complete comparison
+    MiniTest.expect.equality(#items_at("  \"requests; os_name == 'nt' |\","), 0)
+
+    -- known values, both before and after the user types an opening quote
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, '  "requests; platform_system ==|",', "Linux"),
+      [[  "requests; platform_system =='Linux'",]]
+    )
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, '  "requests; platform_system == |",', "Linux"),
+      [[  "requests; platform_system == 'Linux'",]]
+    )
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, "  \"requests; sys_platform != 'wi|'\",", "win32"),
+      [[  "requests; sys_platform != 'win32'",]]
+    )
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, [[  'requests; os_name == |',]], "posix"),
+      [[  'requests; os_name == "posix"',]]
+    )
+
+    -- escaped quotes in basic strings, membership operators, and operands with spaces
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, [[  "requests; sys_platform == \"wi|\"",]], "win32"),
+      [[  "requests; sys_platform == \"win32\"",]]
+    )
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, "  \"requests; sys_platform in '|'\",", "linux"),
+      [[  "requests; sys_platform in 'linux'",]]
+    )
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, '  "requests; os_name not in |",', "nt"),
+      [[  "requests; os_name not in 'nt'",]]
+    )
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, "  \"requests; platform_system == 'Lin|ux 6 SMP'\",", "Linux"),
+      [[  "requests; platform_system == 'Linux'",]]
+    )
+
+    -- extra and group values come from the project's own tables
+    local extra = find_item(items_at("  \"requests; extra == '|'\","), "dev")
+    MiniTest.expect.no_equality(extra, nil)
+    MiniTest.expect.equality(extra.detail, "marker extra")
+    MiniTest.expect.equality(extra.textEdit.newText, "dev")
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, '  "requests; group == |",', "test"),
+      [[  "requests; group == 'test'",]]
+    )
+
+    cleanup(dir)
+  end)
+end
+
 T["completion only runs inside dependency arrays"] = function()
   with_pypi_stub(edit_pypi_stub, function()
     local lines = {

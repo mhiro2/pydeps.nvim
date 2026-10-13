@@ -329,7 +329,11 @@ pydeps.nvim provides completion for:
   • Package names (from PyPI search)
   • Version constraints
   • Extras (e.g., [dev,test])
-  • Dependency groups
+  • Environment markers (fields and values)
+
+Completion only runs inside the [project] dependencies,
+[project.optional-dependencies] and [dependency-groups] arrays. Other strings,
+comments and include-group tables are not completed.
 
 Completion types:~
   • Package names: Type package name → PyPI search suggestions (min 2 chars)
@@ -339,7 +343,14 @@ Completion types:~
   • Versions: Type version constraint (>=, <, ~=, etc.) → PyPI release versions
   • Extras: Type [ inside package spec → available extras from PyPI metadata
     Example: somepackage[bcrypt,toml]
-  • Markers: Type ; for PEP 508 marker completion (extra, group, platform, etc.)
+  • Marker fields: Type ; (or and / or / ( inside a marker) → marker fields
+    such as python_version, sys_platform, platform_system, extra and group
+  • Marker values: Type a comparison after a field → common values for
+    sys_platform, platform_system, os_name, platform_machine,
+    implementation_name and platform_python_implementation, the current
+    environment's value, and the project's extras/groups for extra/group.
+    Values are quoted for you when no quote has been typed yet.
+    Example: requests; platform_system == 'Linux'
 
 Completion sources actual release versions and extras from PyPI metadata.
 

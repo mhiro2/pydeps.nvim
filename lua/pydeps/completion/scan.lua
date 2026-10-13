@@ -8,6 +8,7 @@
 ---@field value string
 ---@field start_col integer
 ---@field end_col integer
+---@field quote string
 
 local M = {}
 
@@ -72,6 +73,7 @@ function M.string_context(line, col)
         value = line:sub(range.start_col + 1, range.end_col - 1),
         start_col = range.start_col,
         end_col = range.end_col,
+        quote = range.quote,
       }
     end
   end
