@@ -192,6 +192,82 @@ T["completion contexts"] = function()
   cleanup(dir)
 end
 
+---@param stub table
+---@param fn fun()
+local function with_pypi_stub(stub, fn)
+  local original = package.loaded["pydeps.providers.pypi"]
+  package.loaded["pydeps.providers.pypi"] = stub
+  local ok, err = pcall(fn)
+  package.loaded["pydeps.providers.pypi"] = original
+  reset_completion_modules()
+  if not ok then
+    error(err, 0)
+  end
+end
+
+local edit_pypi_stub = {
+  search = function(_, cb)
+    cb({ "requests" })
+  end,
+  get = function(_, cb)
+    cb({ info = { provides_extra = { "security" } }, releases = {} })
+  end,
+  sorted_versions = function()
+    return { "2.32.0" }
+  end,
+}
+
+---Complete at the position of `|` in `line` and apply the item labelled `label`.
+---@param bufnr integer
+---@param line_num integer
+---@param marked string line containing a single `|` cursor marker
+---@param label string
+---@return string
+local function complete_and_apply(bufnr, line_num, marked, label)
+  local col = marked:find("|", 1, true) - 1
+  local line = marked:sub(1, col) .. marked:sub(col + 2)
+  vim.api.nvim_buf_set_lines(bufnr, line_num - 1, line_num, false, { line })
+  local result = run_complete(bufnr, line_num, col)
+  local item = find_item(result and result.items, label)
+  if not item then
+    error(string.format("no %q item for %q", label, marked), 0)
+  end
+  vim.lsp.util.apply_text_edits({ item.textEdit }, bufnr, "utf-8")
+  return vim.api.nvim_buf_get_lines(bufnr, line_num - 1, line_num, false)[1]
+end
+
+T["completion edits replace only the token at the cursor"] = function()
+  with_pypi_stub(edit_pypi_stub, function()
+    local dir = create_project({
+      "[project]",
+      "dependencies = [",
+      '  "requests",',
+      "  ",
+      "]",
+    })
+    local config = require("pydeps.config")
+    config.options.completion = { pypi_search = true, pypi_search_min = 2, max_results = 30 }
+    local bufnr = vim.api.nvim_get_current_buf()
+
+    local cases = {
+      { '  "|",', "requests", '  "requests",' },
+      { '  "requests>=|",', "2.32.0", '  "requests>=2.32.0",' },
+      { '  "requests>=|"', "2.32.0", '  "requests>=2.32.0"' },
+      { '  "requests[|",', "security", '  "requests[security",' },
+      { '  "requests[|]>=2",', "security", '  "requests[security]>=2",' },
+      { '  "req|uests>=2",', "requests", '  "requests>=2",' },
+      { '  "requ|",', "requests", '  "requests",' },
+      { '  "requests>=1.|0",', "2.32.0", '  "requests>=2.32.0",' },
+      { '  "requests>=2,<|",', "2.32.0", '  "requests>=2,<2.32.0",' },
+    }
+    for _, case in ipairs(cases) do
+      MiniTest.expect.equality(complete_and_apply(bufnr, 4, case[1], case[2]), case[3])
+    end
+
+    cleanup(dir)
+  end)
+end
+
 T["completion - boundary conditions"] = function()
   reset_completion_modules()
   local completion = require("pydeps.completion.core")

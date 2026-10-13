@@ -43,4 +43,27 @@ T["token_range expands around package and version tokens"] = function()
   MiniTest.expect.equality(version:sub(left_version, right_version - 1), "2.1.0")
 end
 
+T["token_range returns an empty range when no token touches the cursor"] = function()
+  local scan = require("pydeps.completion.scan")
+  local name_pattern = "[%w%._%-]"
+
+  local left, right = scan.token_range("", 1, name_pattern)
+  MiniTest.expect.equality({ left, right }, { 1, 1 })
+
+  left, right = scan.token_range("requests>=", 11, "[%w%._%-%+%*]")
+  MiniTest.expect.equality({ left, right }, { 11, 11 })
+
+  left, right = scan.token_range("requests[", 10, name_pattern)
+  MiniTest.expect.equality({ left, right }, { 10, 10 })
+
+  left, right = scan.token_range("requests[]", 10, name_pattern)
+  MiniTest.expect.equality({ left, right }, { 10, 10 })
+end
+
+T["token_range keeps the token when the cursor is at its end"] = function()
+  local scan = require("pydeps.completion.scan")
+  local left, right = scan.token_range("requ", 5, "[%w%._%-]")
+  MiniTest.expect.equality({ left, right }, { 1, 5 })
+end
+
 return T

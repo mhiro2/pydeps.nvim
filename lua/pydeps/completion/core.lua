@@ -147,10 +147,10 @@ local function detect_context(bufnr, cursor)
   if kind == "version" then
     pattern = "[%w%._%-%+%*]"
   end
-  local token_left, token_right = completion_scan.token_range(value, math.max(rel, 1), pattern)
+  local token_left, token_right = completion_scan.token_range(value, rel, pattern)
   local start_col = ctx.start_col + token_left
   local end_col = ctx.start_col + token_right
-  local token_prefix = value:sub(token_left, math.max(rel - 1, token_left - 1))
+  local token_prefix = value:sub(token_left, rel - 1)
   return {
     kind = kind,
     name = name,

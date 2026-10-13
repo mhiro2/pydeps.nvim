@@ -78,35 +78,24 @@ function M.string_context(line, col)
   return nil
 end
 
+---Find the token around an insertion point.
+---Returns the half-open range [left, right) of characters matching `pattern`
+---around `pos`. When no token touches `pos`, the range is empty (left == right == pos)
+---so an edit inserts text without consuming neighbouring delimiters.
 ---@param value string
----@param pos integer
+---@param pos integer insertion index (1 .. #value + 1)
 ---@param pattern string
 ---@return integer, integer
 function M.token_range(value, pos, pattern)
+  pos = math.max(1, math.min(pos, #value + 1))
+
   local left = pos
-  if left < 1 then
-    left = 1
-  end
-  if left > #value then
-    left = #value
-  end
-  while left > 1 do
-    local ch = value:sub(left - 1, left - 1)
-    if not ch:match(pattern) then
-      break
-    end
+  while left > 1 and value:sub(left - 1, left - 1):match(pattern) do
     left = left - 1
   end
 
   local right = pos
-  if right < 1 then
-    right = 1
-  end
-  while right <= #value do
-    local ch = value:sub(right, right)
-    if not ch:match(pattern) then
-      break
-    end
+  while right <= #value and value:sub(right, right):match(pattern) do
     right = right + 1
   end
 
