@@ -13,6 +13,7 @@ local cache = require("pydeps.core.cache")
 local project = require("pydeps.core.project")
 local util = require("pydeps.util")
 local pypi = require("pydeps.providers.pypi")
+local ts_toml = require("pydeps.treesitter.toml")
 
 local M = {}
 
@@ -119,7 +120,7 @@ local function detect_context(bufnr, cursor)
   local col = cursor[2] + 1
   local line = get_line(bufnr, line_num)
   local ctx = completion_scan.string_context(line, col)
-  if not ctx then
+  if not ctx or not ts_toml.dependency_section_at(bufnr, line_num - 1, ctx.start_col - 1) then
     return nil
   end
   local value = ctx.value

@@ -345,6 +345,37 @@ function M.get_dependency_array_ranges(bufnr)
   return ranges
 end
 
+---Return the dependency section whose array directly holds the string at a position.
+---Strings nested in inline tables (e.g. `{ include-group = "dev" }`) are not dependencies.
+---@param bufnr integer
+---@param row integer 0-indexed line
+---@param col integer 0-indexed byte column of the string's opening quote
+---@return string|nil section
+function M.dependency_section_at(bufnr, row, col)
+  local parser = get_parser(bufnr)
+  if not parser then
+    return nil
+  end
+
+  local tree = parser:parse()[1]
+  if not tree then
+    return nil
+  end
+
+  local node = tree:root():descendant_for_range(row, col, row, col)
+  while node do
+    local node_type = node:type()
+    if node_type == "array" then
+      return array_section(bufnr, node)
+    end
+    if node_type == "comment" or node_type == "pair" or node_type == "inline_table" or node_type == "table" then
+      return nil
+    end
+    node = node:parent()
+  end
+  return nil
+end
+
 ---Parse dependencies from file path using Tree-sitter
 ---@param path string
 ---@return PyDepsDependency[]

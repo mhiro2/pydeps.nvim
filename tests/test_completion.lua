@@ -268,6 +268,91 @@ T["completion edits replace only the token at the cursor"] = function()
   end)
 end
 
+T["completion only runs inside dependency arrays"] = function()
+  with_pypi_stub(edit_pypi_stub, function()
+    local lines = {
+      "[project]",
+      'description = "req"',
+      "dependencies = [",
+      '  # "req"',
+      '  "req",',
+      "]",
+      "",
+      "[project.urls]",
+      'homepage = "https://req.example"',
+      "",
+      "[project.optional-dependencies]",
+      'dev = ["req"]',
+      "",
+      "[dependency-groups]",
+      'lint = [{ include-group = "req" }, "req"]',
+      "",
+      "[tool.ruff]",
+      'select = ["req"]',
+      "",
+      "[tool.other]",
+      'dependencies = ["req"]',
+      "",
+      "[project.scripts]",
+      'dependencies = "req"',
+    }
+    local dir = create_project(lines)
+    require("pydeps.config").options.completion = { pypi_search = true, pypi_search_min = 2 }
+    local bufnr = vim.api.nvim_get_current_buf()
+
+    ---@param line_num integer
+    ---@param occurrence? integer
+    ---@return integer
+    local function count_at(line_num, occurrence)
+      local line = vim.api.nvim_buf_get_lines(bufnr, line_num - 1, line_num, false)[1]
+      local col = 0
+      for _ = 1, occurrence or 1 do
+        col = line:find("req", col + 1, true)
+      end
+      local result = run_complete(bufnr, line_num, col + 2)
+      return #(result.items or {})
+    end
+
+    -- positive: dependency arrays in every supported table
+    MiniTest.expect.equality(count_at(5) > 0, true)
+    MiniTest.expect.equality(count_at(12) > 0, true)
+    MiniTest.expect.equality(count_at(15, 2) > 0, true)
+
+    -- negative: other strings, comments, inline tables and unrelated tables
+    MiniTest.expect.equality(count_at(2), 0)
+    MiniTest.expect.equality(count_at(4), 0)
+    MiniTest.expect.equality(count_at(9), 0)
+    MiniTest.expect.equality(count_at(15, 1), 0)
+    MiniTest.expect.equality(count_at(18), 0)
+    MiniTest.expect.equality(count_at(21), 0)
+    MiniTest.expect.equality(count_at(24), 0)
+
+    cleanup(dir)
+  end)
+end
+
+T["completion works in an unterminated dependency string"] = function()
+  with_pypi_stub(edit_pypi_stub, function()
+    local dir = create_project({
+      "[project]",
+      "dependencies = [",
+      '  "requests",',
+      '  "req',
+      "]",
+      "",
+      "[tool.other]",
+      'name = "x"',
+    })
+    require("pydeps.config").options.completion = { pypi_search = true, pypi_search_min = 2 }
+    local bufnr = vim.api.nvim_get_current_buf()
+
+    local result = run_complete(bufnr, 4, #'  "req')
+    MiniTest.expect.no_equality(find_item(result.items, "requests"), nil)
+
+    cleanup(dir)
+  end)
+end
+
 T["completion - boundary conditions"] = function()
   reset_completion_modules()
   local completion = require("pydeps.completion.core")
