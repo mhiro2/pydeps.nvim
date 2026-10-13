@@ -50,6 +50,65 @@ local function find_pair_key_and_array(node)
   return key_node, array_node
 end
 
+---Resolve the dependency section that a `key = [...]` pair declares.
+---@param table_key string
+---@param key_name string
+---@return string|nil section
+local function dependency_section(table_key, key_name)
+  if table_key == "project" and key_name == "dependencies" then
+    return "project"
+  elseif table_key == "project.optional-dependencies" then
+    return "optional:" .. key_name
+  elseif table_key == "dependency-groups" then
+    return "group:" .. key_name
+  end
+  return nil
+end
+
+---Section of the array node when it is the value of a dependency pair.
+---@param bufnr integer
+---@param array_node table
+---@return string|nil section
+local function array_section(bufnr, array_node)
+  local pair = array_node:parent()
+  if not pair or pair:type() ~= "pair" then
+    return nil
+  end
+  local table_node = pair:parent()
+  if not table_node or (table_node:type() ~= "table" and table_node:type() ~= "table_array_element") then
+    return nil
+  end
+  local key_node, value_node = find_pair_key_and_array(pair)
+  local table_key_node = find_key_node(table_node)
+  if not key_node or not table_key_node or value_node ~= array_node then
+    return nil
+  end
+  return dependency_section(
+    vim.treesitter.get_node_text(table_key_node, bufnr),
+    vim.treesitter.get_node_text(key_node, bufnr)
+  )
+end
+
+---Call `fn` for every dependency array in the document.
+---@param bufnr integer
+---@param root table
+---@param fn fun(section: string, array_node: table)
+local function each_dependency_array(bufnr, root, fn)
+  for node in root:iter_children() do
+    if node:type() == "table" or node:type() == "table_array_element" then
+      for child in node:iter_children() do
+        if child:type() == "pair" then
+          local _, array_node = find_pair_key_and_array(child)
+          local section = array_node and array_section(bufnr, array_node)
+          if section then
+            fn(section, array_node)
+          end
+        end
+      end
+    end
+  end
+end
+
 ---Check if Tree-sitter and toml parser are available
 ---@return boolean
 function M.is_available()
@@ -251,34 +310,9 @@ function M.parse_buffer(bufnr)
   local comment_map = build_comment_map(bufnr, root)
   local deps = {}
 
-  for node in root:iter_children() do
-    if node:type() == "table" or node:type() == "table_array_element" then
-      local table_key_node = find_key_node(node)
-      if table_key_node then
-        local table_key = vim.treesitter.get_node_text(table_key_node, bufnr)
-        for child in node:iter_children() do
-          if child:type() == "pair" then
-            local key_node, array_node = find_pair_key_and_array(child)
-            if key_node and array_node then
-              local key_name = vim.treesitter.get_node_text(key_node, bufnr)
-              local section = nil
-              if table_key == "project" and key_name == "dependencies" then
-                section = "project"
-              elseif table_key == "project.optional-dependencies" then
-                section = "optional:" .. key_name
-              elseif table_key == "dependency-groups" then
-                section = "group:" .. key_name
-              end
-              if section then
-                local parsed = parse_array_dependencies(bufnr, array_node, section, comment_map)
-                vim.list_extend(deps, parsed)
-              end
-            end
-          end
-        end
-      end
-    end
-  end
+  each_dependency_array(bufnr, root, function(section, array_node)
+    vim.list_extend(deps, parse_array_dependencies(bufnr, array_node, section, comment_map))
+  end)
 
   return deps
 end
@@ -300,39 +334,46 @@ function M.get_dependency_array_ranges(bufnr)
   local root = tree:root()
   local ranges = {}
 
-  for node in root:iter_children() do
-    if node:type() == "table" or node:type() == "table_array_element" then
-      local table_key_node = find_key_node(node)
-      if table_key_node then
-        local table_key = vim.treesitter.get_node_text(table_key_node, bufnr)
-        for child in node:iter_children() do
-          if child:type() == "pair" then
-            local key_node, array_node = find_pair_key_and_array(child)
-            if key_node and array_node then
-              local key_name = vim.treesitter.get_node_text(key_node, bufnr)
-              local section = nil
-              if table_key == "project" and key_name == "dependencies" then
-                section = "project"
-              elseif table_key == "project.optional-dependencies" then
-                section = "optional:" .. key_name
-              elseif table_key == "dependency-groups" then
-                section = "group:" .. key_name
-              end
-              if section then
-                local start_row, _, end_row, _ = array_node:range()
-                ranges[section] = {
-                  start_line = start_row + 1,
-                  end_line = end_row + 1,
-                }
-              end
-            end
-          end
-        end
-      end
-    end
-  end
+  each_dependency_array(bufnr, root, function(section, array_node)
+    local start_row, _, end_row, _ = array_node:range()
+    ranges[section] = {
+      start_line = start_row + 1,
+      end_line = end_row + 1,
+    }
+  end)
 
   return ranges
+end
+
+---Return the dependency section whose array directly holds the string at a position.
+---Strings nested in inline tables (e.g. `{ include-group = "dev" }`) are not dependencies.
+---@param bufnr integer
+---@param row integer 0-indexed line
+---@param col integer 0-indexed byte column of the string's opening quote
+---@return string|nil section
+function M.dependency_section_at(bufnr, row, col)
+  local parser = get_parser(bufnr)
+  if not parser then
+    return nil
+  end
+
+  local tree = parser:parse()[1]
+  if not tree then
+    return nil
+  end
+
+  local node = tree:root():descendant_for_range(row, col, row, col)
+  while node do
+    local node_type = node:type()
+    if node_type == "array" then
+      return array_section(bufnr, node)
+    end
+    if node_type == "comment" or node_type == "pair" or node_type == "inline_table" or node_type == "table" then
+      return nil
+    end
+    node = node:parent()
+  end
+  return nil
 end
 
 ---Parse dependencies from file path using Tree-sitter

@@ -210,14 +210,17 @@ See `:help pydeps-highlights` for the complete list and default links.
 
 ## ⌨️ Completion
 
-pydeps completes PEP 508-style dependency strings in `pyproject.toml` and related files.
+pydeps completes PEP 508-style dependency strings in `pyproject.toml`.
 It works with both **nvim-cmp** and **blink.cmp**.
+Completion only runs inside `[project] dependencies`, `[project.optional-dependencies]`
+and `[dependency-groups]` arrays; other strings and comments are left alone.
 
 **What you can complete:**
 - **Package names**: PyPI search suggestions (min 2 chars)
 - **Versions**: type a constraint (`==`, `>=`, `~=`, etc.) → release versions
 - **Extras**: type `[` inside a package spec → available extras
-- **Markers**: type `;` → marker keys/values (`extra`, `group`, `platform_system`, etc.)
+- **Markers**: type `;` (or `and` / `or` / `(`) → marker fields (`python_version`, `sys_platform`, `platform_system`, `extra`, `group`, etc.)
+- **Marker values**: type a comparison after a field → common values (`sys_platform`, `platform_system`, `os_name`, `platform_machine`, `implementation_name`, `platform_python_implementation`), the current environment's value, and the project's own extras/groups for `extra`/`group`. Values are quoted for you when no quote has been typed yet.
 
 **Examples:**
 - `requests[security]>=2.31; python_version >= "3.11"`
@@ -248,11 +251,11 @@ require("cmp").setup({
 require("blink.cmp").setup({
   sources = {
     default = { "pydeps" },
-  },
-  providers = {
-    pydeps = {
-      name = "pydeps",
-      module = "pydeps.completion.blink",
+    providers = {
+      pydeps = {
+        name = "pydeps",
+        module = "pydeps.completion.blink",
+      },
     },
   },
 })

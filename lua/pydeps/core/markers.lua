@@ -247,6 +247,14 @@ local function evaluate(node, env)
   return nil, "invalid"
 end
 
+---Names of the marker fields the evaluator understands.
+---@return string[]
+function M.field_names()
+  local names = vim.tbl_keys(fields)
+  table.sort(names)
+  return names
+end
+
 ---Evaluate a marker without guessing missing environment values.
 ---@param marker? string
 ---@param env? table<string, any>

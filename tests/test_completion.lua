@@ -192,6 +192,257 @@ T["completion contexts"] = function()
   cleanup(dir)
 end
 
+---@param stub table
+---@param fn fun()
+local function with_pypi_stub(stub, fn)
+  local original = package.loaded["pydeps.providers.pypi"]
+  package.loaded["pydeps.providers.pypi"] = stub
+  local ok, err = pcall(fn)
+  package.loaded["pydeps.providers.pypi"] = original
+  reset_completion_modules()
+  if not ok then
+    error(err, 0)
+  end
+end
+
+local edit_pypi_stub = {
+  search = function(_, cb)
+    cb({ "requests" })
+  end,
+  get = function(_, cb)
+    cb({ info = { provides_extra = { "security" } }, releases = {} })
+  end,
+  sorted_versions = function()
+    return { "2.32.0" }
+  end,
+}
+
+---Complete at the position of `|` in `line` and apply the item labelled `label`.
+---@param bufnr integer
+---@param line_num integer
+---@param marked string line containing a single `|` cursor marker
+---@param label string
+---@return string
+local function complete_and_apply(bufnr, line_num, marked, label)
+  local col = marked:find("|", 1, true) - 1
+  local line = marked:sub(1, col) .. marked:sub(col + 2)
+  vim.api.nvim_buf_set_lines(bufnr, line_num - 1, line_num, false, { line })
+  local result = run_complete(bufnr, line_num, col)
+  local item = find_item(result and result.items, label)
+  if not item then
+    error(string.format("no %q item for %q", label, marked), 0)
+  end
+  vim.lsp.util.apply_text_edits({ item.textEdit }, bufnr, "utf-8")
+  return vim.api.nvim_buf_get_lines(bufnr, line_num - 1, line_num, false)[1]
+end
+
+T["completion edits replace only the token at the cursor"] = function()
+  with_pypi_stub(edit_pypi_stub, function()
+    local dir = create_project({
+      "[project]",
+      "dependencies = [",
+      '  "requests",',
+      "  ",
+      "]",
+    })
+    local config = require("pydeps.config")
+    config.options.completion = { pypi_search = true, pypi_search_min = 2, max_results = 30 }
+    local bufnr = vim.api.nvim_get_current_buf()
+
+    local cases = {
+      { '  "|",', "requests", '  "requests",' },
+      { '  "requests>=|",', "2.32.0", '  "requests>=2.32.0",' },
+      { '  "requests>=|"', "2.32.0", '  "requests>=2.32.0"' },
+      { '  "requests[|",', "security", '  "requests[security",' },
+      { '  "requests[|]>=2",', "security", '  "requests[security]>=2",' },
+      { '  "req|uests>=2",', "requests", '  "requests>=2",' },
+      { '  "requ|",', "requests", '  "requests",' },
+      { '  "requests>=1.|0",', "2.32.0", '  "requests>=2.32.0",' },
+      { '  "requests>=2,<|",', "2.32.0", '  "requests>=2,<2.32.0",' },
+    }
+    for _, case in ipairs(cases) do
+      MiniTest.expect.equality(complete_and_apply(bufnr, 4, case[1], case[2]), case[3])
+    end
+
+    cleanup(dir)
+  end)
+end
+
+T["completion offers marker fields and values"] = function()
+  with_pypi_stub(edit_pypi_stub, function()
+    local dir = create_project({
+      "[project]",
+      "dependencies = [",
+      "  ",
+      "]",
+      "",
+      "[project.optional-dependencies]",
+      'dev = ["pytest"]',
+      "",
+      "[dependency-groups]",
+      'test = ["coverage"]',
+    })
+    local bufnr = vim.api.nvim_get_current_buf()
+
+    ---@param marked string
+    ---@return table[]
+    local function items_at(marked)
+      local col = marked:find("|", 1, true) - 1
+      vim.api.nvim_buf_set_lines(bufnr, 2, 3, false, { marked:sub(1, col) .. marked:sub(col + 2) })
+      return run_complete(bufnr, 3, col).items or {}
+    end
+
+    -- fields right after `;`, while typing, and after a boolean operator
+    for _, marked in ipairs({
+      '  "requests; |",',
+      '  "requests;|",',
+      '  "requests; py|",',
+      "  \"requests; python_version >= '3.8' and |\",",
+      '  "requests; (|",',
+    }) do
+      local field = find_item(items_at(marked), "platform_system")
+      MiniTest.expect.no_equality(field, nil)
+      MiniTest.expect.equality(field.detail, "marker field")
+    end
+
+    -- nothing after a complete comparison
+    MiniTest.expect.equality(#items_at("  \"requests; os_name == 'nt' |\","), 0)
+
+    -- known values, both before and after the user types an opening quote
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, '  "requests; platform_system ==|",', "Linux"),
+      [[  "requests; platform_system =='Linux'",]]
+    )
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, '  "requests; platform_system == |",', "Linux"),
+      [[  "requests; platform_system == 'Linux'",]]
+    )
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, "  \"requests; sys_platform != 'wi|'\",", "win32"),
+      [[  "requests; sys_platform != 'win32'",]]
+    )
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, [[  'requests; os_name == |',]], "posix"),
+      [[  'requests; os_name == "posix"',]]
+    )
+
+    -- escaped quotes in basic strings, membership operators, and operands with spaces
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, [[  "requests; sys_platform == \"wi|\"",]], "win32"),
+      [[  "requests; sys_platform == \"win32\"",]]
+    )
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, "  \"requests; sys_platform in '|'\",", "linux"),
+      [[  "requests; sys_platform in 'linux'",]]
+    )
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, '  "requests; os_name not in |",', "nt"),
+      [[  "requests; os_name not in 'nt'",]]
+    )
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, "  \"requests; platform_system == 'Lin|ux 6 SMP'\",", "Linux"),
+      [[  "requests; platform_system == 'Linux'",]]
+    )
+
+    -- extra and group values come from the project's own tables
+    local extra = find_item(items_at("  \"requests; extra == '|'\","), "dev")
+    MiniTest.expect.no_equality(extra, nil)
+    MiniTest.expect.equality(extra.detail, "marker extra")
+    MiniTest.expect.equality(extra.textEdit.newText, "dev")
+    MiniTest.expect.equality(
+      complete_and_apply(bufnr, 3, '  "requests; group == |",', "test"),
+      [[  "requests; group == 'test'",]]
+    )
+
+    cleanup(dir)
+  end)
+end
+
+T["completion only runs inside dependency arrays"] = function()
+  with_pypi_stub(edit_pypi_stub, function()
+    local lines = {
+      "[project]",
+      'description = "req"',
+      "dependencies = [",
+      '  # "req"',
+      '  "req",',
+      "]",
+      "",
+      "[project.urls]",
+      'homepage = "https://req.example"',
+      "",
+      "[project.optional-dependencies]",
+      'dev = ["req"]',
+      "",
+      "[dependency-groups]",
+      'lint = [{ include-group = "req" }, "req"]',
+      "",
+      "[tool.ruff]",
+      'select = ["req"]',
+      "",
+      "[tool.other]",
+      'dependencies = ["req"]',
+      "",
+      "[project.scripts]",
+      'dependencies = "req"',
+    }
+    local dir = create_project(lines)
+    require("pydeps.config").options.completion = { pypi_search = true, pypi_search_min = 2 }
+    local bufnr = vim.api.nvim_get_current_buf()
+
+    ---@param line_num integer
+    ---@param occurrence? integer
+    ---@return integer
+    local function count_at(line_num, occurrence)
+      local line = vim.api.nvim_buf_get_lines(bufnr, line_num - 1, line_num, false)[1]
+      local col = 0
+      for _ = 1, occurrence or 1 do
+        col = line:find("req", col + 1, true)
+      end
+      local result = run_complete(bufnr, line_num, col + 2)
+      return #(result.items or {})
+    end
+
+    -- positive: dependency arrays in every supported table
+    MiniTest.expect.equality(count_at(5) > 0, true)
+    MiniTest.expect.equality(count_at(12) > 0, true)
+    MiniTest.expect.equality(count_at(15, 2) > 0, true)
+
+    -- negative: other strings, comments, inline tables and unrelated tables
+    MiniTest.expect.equality(count_at(2), 0)
+    MiniTest.expect.equality(count_at(4), 0)
+    MiniTest.expect.equality(count_at(9), 0)
+    MiniTest.expect.equality(count_at(15, 1), 0)
+    MiniTest.expect.equality(count_at(18), 0)
+    MiniTest.expect.equality(count_at(21), 0)
+    MiniTest.expect.equality(count_at(24), 0)
+
+    cleanup(dir)
+  end)
+end
+
+T["completion works in an unterminated dependency string"] = function()
+  with_pypi_stub(edit_pypi_stub, function()
+    local dir = create_project({
+      "[project]",
+      "dependencies = [",
+      '  "requests",',
+      '  "req',
+      "]",
+      "",
+      "[tool.other]",
+      'name = "x"',
+    })
+    require("pydeps.config").options.completion = { pypi_search = true, pypi_search_min = 2 }
+    local bufnr = vim.api.nvim_get_current_buf()
+
+    local result = run_complete(bufnr, 4, #'  "req')
+    MiniTest.expect.no_equality(find_item(result.items, "requests"), nil)
+
+    cleanup(dir)
+  end)
+end
+
 T["completion - boundary conditions"] = function()
   reset_completion_modules()
   local completion = require("pydeps.completion.core")
