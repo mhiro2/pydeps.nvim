@@ -251,11 +251,11 @@ require("cmp").setup({
 require("blink.cmp").setup({
   sources = {
     default = { "pydeps" },
-  },
-  providers = {
-    pydeps = {
-      name = "pydeps",
-      module = "pydeps.completion.blink",
+    providers = {
+      pydeps = {
+        name = "pydeps",
+        module = "pydeps.completion.blink",
+      },
     },
   },
 })
