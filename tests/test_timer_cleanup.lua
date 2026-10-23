@@ -1,191 +1,195 @@
 local MiniTest = require("mini.test")
 local helpers = require("tests.test_helpers")
 
-local T = MiniTest.new_set({
+local T = helpers.new_set({
   hooks = {
     pre_case = function()
       helpers.close_extra_windows()
       vim.cmd("enew!")
     end,
-    post_case = function()
-      helpers.close_extra_windows()
-    end,
   },
 })
 
--- Test state.lua timer cleanup
-T["state: clear_refresh_timer removes timer"] = function()
+---Record every uv timer created until the case finishes.
+---@return uv_timer_t[]
+local function spy_timers()
+  local created = {}
+  local new_timer = vim.uv.new_timer
+  helpers.stub(vim.uv, "new_timer", function()
+    local timer = new_timer()
+    table.insert(created, timer)
+    return timer
+  end)
+  return created
+end
+
+---@param lines string[]
+---@return integer bufnr
+local function open_pyproject(lines)
+  local dir = vim.fn.tempname()
+  vim.fn.mkdir(dir, "p")
+  local path = dir .. "/pyproject.toml"
+  vim.fn.writefile(lines, path)
+  helpers.defer(function()
+    vim.fn.delete(dir, "rf")
+  end)
+  local bufnr = vim.fn.bufadd(path)
+  -- Load without BufReadPost so only the events a case fires schedule work.
+  local eventignore = vim.o.eventignore
+  vim.o.eventignore = "all"
+  vim.fn.bufload(bufnr)
+  vim.o.eventignore = eventignore
+  return bufnr
+end
+
+---Enable auto refresh and count the refreshes that actually run.
+---@param debounce_ms integer
+---@return { count: integer }
+local function setup_counting_refresh(debounce_ms)
+  require("pydeps").setup({ auto_refresh = true, refresh_debounce_ms = debounce_ms })
   local state = require("pydeps.core.state")
-  local cache = require("pydeps.core.cache")
-
-  -- Mock dependencies
-  package.loaded["pydeps.ui.virtual_text"] = {
-    clear = function() end,
-    render = function() end,
-    setup_highlights = function() end,
-    clear_debounce_state = function() end,
-  }
-  package.loaded["pydeps.ui.diagnostics"] = {
-    clear = function() end,
-    render = function() end,
-  }
-  package.loaded["pydeps.core.env"] = {
-    get = function()
-      return {}
-    end,
-  }
-
-  -- Setup pydeps with auto_refresh enabled
-  require("pydeps").setup({
-    auto_refresh = true,
-    refresh_debounce_ms = 100,
-  })
-
-  -- Create a pyproject.toml buffer
-  local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(bufnr, "pyproject.toml")
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
-    "[project]",
-    "dependencies = [",
-    '  "requests",',
-    "]",
-  })
-
-  -- Mock cache
-  cache.get_pyproject = function()
-    return {}
-  end
-  cache.get_lockfile = function()
-    return { resolved = {} }, false
-  end
-
-  -- Trigger refresh with debounce (creates a timer)
-  vim.api.nvim_set_current_buf(bufnr)
-  vim.api.nvim_exec_autocmds("BufReadPost", { buffer = bufnr })
-
-  -- Wait for timer to be created
-  vim.wait(50, function()
-    return false
+  local refreshes = { count = 0 }
+  helpers.stub(state, "refresh", function()
+    refreshes.count = refreshes.count + 1
   end)
-
-  -- Wipe buffer (should clean up timer)
-  vim.api.nvim_buf_delete(bufnr, { force = true })
-
-  -- Wait a bit to ensure cleanup completes
-  vim.wait(50, function()
-    return false
-  end)
-
-  -- If we reach here without errors, timer was cleaned up properly
-  MiniTest.expect.no_error(function()
-    state.disable()
-  end)
+  helpers.defer(state.disable)
+  return refreshes
 end
 
--- Test virtual_text.lua debounce_state cleanup
-T["virtual_text: clear_debounce_state removes timer"] = function()
+local PYPROJECT = { "[project]", "dependencies = [", '  "requests",', "]" }
+
+T["state: wiping a buffer closes its pending refresh timer"] = function()
+  local refreshes = setup_counting_refresh(100)
+  local bufnr = open_pyproject(PYPROJECT)
+  local timers = spy_timers()
+
+  vim.api.nvim_exec_autocmds("TextChanged", { buffer = bufnr })
+  MiniTest.expect.equality(#timers, 1)
+  MiniTest.expect.equality(timers[1]:is_active(), true)
+
+  vim.api.nvim_buf_delete(bufnr, { force = true })
+  MiniTest.expect.equality(timers[1]:is_closing(), true)
+
+  helpers.drain(200)
+  MiniTest.expect.equality(refreshes.count, 0)
+end
+
+T["state: pending refresh runs when the buffer is kept"] = function()
+  local refreshes = setup_counting_refresh(20)
+  local bufnr = open_pyproject(PYPROJECT)
+
+  vim.api.nvim_exec_autocmds("TextChanged", { buffer = bufnr })
+  helpers.wait_for(function()
+    return refreshes.count == 1
+  end, "debounced refresh")
+end
+
+T["state: disable closes refresh timers of every buffer"] = function()
+  local refreshes = setup_counting_refresh(100)
+  local first = open_pyproject(PYPROJECT)
+  local second = open_pyproject(PYPROJECT)
+  local timers = spy_timers()
+
+  vim.api.nvim_exec_autocmds("TextChanged", { buffer = first })
+  vim.api.nvim_exec_autocmds("TextChanged", { buffer = second })
+  MiniTest.expect.equality(#timers, 2)
+
+  require("pydeps.core.state").disable()
+  MiniTest.expect.equality(timers[1]:is_closing(), true)
+  MiniTest.expect.equality(timers[2]:is_closing(), true)
+
+  helpers.drain(200)
+  MiniTest.expect.equality(refreshes.count, 0)
+end
+
+T["virtual_text: clear_debounce_state cancels the post-fetch render"] = function()
+  require("pydeps").setup({ auto_refresh = false })
   local virtual_text = require("pydeps.ui.virtual_text")
+  local pypi = require("pydeps.providers.pypi")
+  local buffer_context = require("pydeps.core.buffer_context")
 
-  -- Create a test buffer
-  local bufnr = vim.api.nvim_create_buf(false, true)
-
-  -- Render should create debounce state with timer
-  virtual_text.render(bufnr, {}, {}, {})
-
-  -- Wait for debounce timer
-  vim.wait(100, function()
-    return false
+  helpers.stub(require("pydeps.core.env"), "get", function()
+    return {}
+  end)
+  local held = {}
+  helpers.stub(pypi, "get_cached", function()
+    return nil, false
+  end)
+  helpers.stub(pypi, "get", function(name, cb)
+    held[name] = cb
   end)
 
-  -- Clear debounce state
-  MiniTest.expect.no_error(function()
-    virtual_text.clear_debounce_state(bufnr)
+  local kept = open_pyproject({ "[project]", "dependencies = [", '  "kept-pkg",', "]" })
+  local cleared = open_pyproject({ "[project]", "dependencies = [", '  "cleared-pkg",', "]" })
+  virtual_text.render(kept, buffer_context.get_deps(kept), {}, {})
+  virtual_text.render(cleared, buffer_context.get_deps(cleared), {}, {})
+  MiniTest.expect.equality(held["kept-pkg"] ~= nil and held["cleared-pkg"] ~= nil, true)
+
+  local renders = {}
+  local render = virtual_text.render
+  helpers.stub(virtual_text, "render", function(bufnr, ...)
+    renders[bufnr] = (renders[bufnr] or 0) + 1
+    return render(bufnr, ...)
   end)
 
-  -- Delete buffer
-  vim.api.nvim_buf_delete(bufnr, { force = true })
+  held["kept-pkg"]({ releases = {} })
+  held["cleared-pkg"]({ releases = {} })
+  virtual_text.clear_debounce_state(cleared)
+
+  helpers.wait_for(function()
+    return renders[kept] == 1
+  end, "post-fetch render of the kept buffer")
+  helpers.drain(100)
+  MiniTest.expect.equality(renders[cleared], nil)
 end
 
--- Test pypi.lua timer cleanup on request timeout
-T["pypi: request timeout cleans up timer"] = function()
-  -- Reload modules to reset state.
+T["pypi: request timeout stops the job and closes its timer"] = function()
   package.loaded["pydeps.providers.pypi"] = nil
   package.loaded["pydeps.providers.pypi.metadata"] = nil
-  package.loaded["pydeps.providers.pypi.shared"] = nil
+  helpers.defer(function()
+    package.loaded["pydeps.providers.pypi"] = nil
+    package.loaded["pydeps.providers.pypi.metadata"] = nil
+  end)
 
-  -- Shrink the timeout so the timer fires during the test rather than after
-  -- it returns, otherwise the uv timer leaks for ~10s into the next case.
   local shared = require("pydeps.providers.pypi.shared")
-  local original_timeout = shared.REQUEST_TIMEOUT
-  shared.REQUEST_TIMEOUT = 50
+  helpers.stub(shared, "REQUEST_TIMEOUT", 50)
 
-  -- Mock curl/jobstart so the request hangs deterministically. Without this,
-  -- a real curl on CI resolves before the timer fires.
-  local original_executable = vim.fn.executable
-  local original_jobstart = vim.fn.jobstart
-  local original_jobstop = vim.fn.jobstop
-  vim.fn.executable = function(cmd)
-    if cmd == "curl" then
-      return 1
-    end
-    return 0
-  end
-  vim.fn.jobstart = function()
+  local job_opts
+  local stopped = {}
+  helpers.stub(vim.fn, "executable", function(cmd)
+    return cmd == "curl" and 1 or 0
+  end)
+  helpers.stub(vim.fn, "jobstart", function(_, opts)
+    job_opts = opts
+    return 42
+  end)
+  helpers.stub(vim.fn, "jobstop", function(id)
+    table.insert(stopped, id)
     return 1
-  end
-  vim.fn.jobstop = function()
-    return 1
-  end
+  end)
+  local timers = spy_timers()
 
+  local calls = {}
+  require("pydeps.providers.pypi").get("hanging-package", function(data)
+    table.insert(calls, { data = data })
+  end)
+  MiniTest.expect.equality(#timers, 1)
+
+  helpers.wait_for(function()
+    return #calls == 1 and #stopped == 1
+  end, "timeout callback and jobstop")
+  MiniTest.expect.equality(calls[1].data, nil)
+  MiniTest.expect.equality(stopped, { 42 })
+  MiniTest.expect.equality(timers[1]:is_closing(), true)
+
+  -- The stopped job still exits later; its output must neither reach callers
+  -- again nor replace the timed-out result in the cache.
   local pypi = require("pydeps.providers.pypi")
-
-  local timeout_callback_args
-  pypi.get("hanging-package", function(data)
-    timeout_callback_args = { data = data, called = true }
-  end)
-
-  -- Wait for the 50ms timeout to fire and schedule the callback.
-  vim.wait(500, function()
-    return timeout_callback_args ~= nil
-  end, 10)
-
-  MiniTest.expect.equality(timeout_callback_args ~= nil, true)
-  MiniTest.expect.equality(timeout_callback_args.data, nil)
-
-  shared.REQUEST_TIMEOUT = original_timeout
-  vim.fn.executable = original_executable
-  vim.fn.jobstart = original_jobstart
-  vim.fn.jobstop = original_jobstop
-end
-
--- Test state.lua disable cleans up all timers
-T["state: disable cleans up all timers"] = function()
-  local state = require("pydeps.core.state")
-
-  -- Mock dependencies
-  package.loaded["pydeps.ui.virtual_text"] = {
-    clear = function() end,
-    render = function() end,
-    setup_highlights = function() end,
-    clear_debounce_state = function() end,
-  }
-  package.loaded["pydeps.ui.diagnostics"] = {
-    clear = function() end,
-    render = function() end,
-  }
-
-  -- Setup and enable
-  require("pydeps").setup({
-    auto_refresh = true,
-    refresh_debounce_ms = 100,
-  })
-
-  state.enable()
-
-  -- Disable should clean up all timers without error
-  MiniTest.expect.no_error(function()
-    state.disable()
-  end)
+  job_opts.on_stdout(42, { '{"info": {"version": "1.0.0"}, "releases": {}}' })
+  job_opts.on_exit(42, 0, "exit")
+  helpers.drain(50)
+  MiniTest.expect.equality(#calls, 1)
+  MiniTest.expect.equality(pypi.get_cached("hanging-package"), nil)
 end
 
 return T

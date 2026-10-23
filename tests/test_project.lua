@@ -6,23 +6,35 @@ local T = helpers.create_test_set()
 
 T["find_root caches result per buffer"] = function()
   local temp_dir = vim.fn.resolve(vim.fn.tempname())
-  vim.fn.mkdir(temp_dir, "p")
+  local nested = temp_dir .. "/nested"
+  vim.fn.mkdir(nested, "p")
   vim.fn.writefile({ "[project]" }, temp_dir .. "/pyproject.toml")
+  vim.fn.writefile({ "[project]" }, nested .. "/pyproject.toml")
+  helpers.defer(function()
+    vim.fn.delete(temp_dir, "rf")
+  end)
 
   local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(bufnr, temp_dir .. "/test.py")
+  vim.api.nvim_buf_set_name(bufnr, nested .. "/test.py")
   project.clear_cache(bufnr)
 
-  local root1 = project.find_root(bufnr)
-  MiniTest.expect.equality(root1, temp_dir)
+  local lookups = 0
+  local find = vim.fs.find
+  helpers.stub(vim.fs, "find", function(...)
+    lookups = lookups + 1
+    return find(...)
+  end)
 
-  -- Second call should return the same value (cached)
-  local root2 = project.find_root(bufnr)
-  MiniTest.expect.equality(root2, root1)
+  MiniTest.expect.equality(project.find_root(bufnr), nested)
 
-  -- Cleanup
-  vim.api.nvim_buf_delete(bufnr, { force = true })
-  vim.fn.delete(temp_dir, "rf")
+  -- Removing the nearest marker must not be noticed until the cache is cleared.
+  vim.fn.delete(nested .. "/pyproject.toml")
+  MiniTest.expect.equality(project.find_root(bufnr), nested)
+  MiniTest.expect.equality(lookups, 1)
+
+  project.clear_cache(bufnr)
+  MiniTest.expect.equality(project.find_root(bufnr), temp_dir)
+  MiniTest.expect.equality(lookups, 2)
 end
 
 T["find_root caches nil result"] = function()

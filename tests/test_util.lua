@@ -18,15 +18,16 @@ T["parse_requirement_extras extracts extras"] = function()
   MiniTest.expect.equality(util.parse_requirement_extras(""), {})
 end
 
-T["now returns current time in seconds"] = function()
+T["now converts the loop clock from milliseconds to seconds"] = function()
   local util = require("pydeps.util")
-  local t1 = util.now()
-  MiniTest.expect.equality(type(t1), "number")
-  MiniTest.expect.equality(t1 > 0, true)
-  -- now() should return time in seconds (uv.now() / 1000)
-  -- uv.now() returns milliseconds since Neovim started
-  local t2 = util.now()
-  MiniTest.expect.equality(t2 >= t1, true)
+  local clock = 12345
+  helpers.stub(vim.uv, "now", function()
+    return clock
+  end)
+
+  MiniTest.expect.equality(util.now(), 12.345)
+  clock = clock + 3000
+  MiniTest.expect.equality(util.now(), 15.345)
 end
 
 T["safe_close_timer handles nil"] = function()

@@ -1,23 +1,23 @@
 local MiniTest = require("mini.test")
 local helpers = require("tests.test_helpers")
 
-local T = MiniTest.new_set({
+local T = helpers.new_set({
   hooks = {
     pre_case = function()
       helpers.close_extra_windows()
       vim.cmd("enew!")
 
-      package.loaded["pydeps"] = nil
-      package.loaded["pydeps.core.state"] = nil
+      helpers.stub_module("pydeps", nil)
+      helpers.stub_module("pydeps.core.state", nil)
 
       -- A real environment probe finishes later and emits PyDepsEnvUpdated,
       -- adding a refresh the cases do not expect.
-      package.loaded["pydeps.core.env"] = {
+      helpers.stub_module("pydeps.core.env", {
         get = function()
           return {}
         end,
-      }
-      package.loaded["pydeps.core.cache"] = {
+      })
+      helpers.stub_module("pydeps.core.cache", {
         get_pyproject = function()
           return {
             { name = "requests", spec = "requests", line = 1, col_start = 1, col_end = 1 },
@@ -28,15 +28,15 @@ local T = MiniTest.new_set({
         end,
         invalidate_pyproject = function() end,
         invalidate_lockfile = function() end,
-      }
-      package.loaded["pydeps.core.project"] = {
+      })
+      helpers.stub_module("pydeps.core.project", {
         find_root = function()
           return "/tmp"
         end,
         clear_cache = function() end,
         clear_all_caches = function() end,
-      }
-      package.loaded["pydeps.ui.virtual_text"] = {
+      })
+      helpers.stub_module("pydeps.ui.virtual_text", {
         ns = vim.api.nvim_create_namespace("pydeps-test-vt"),
         setup_highlights = function() end,
         clear = function() end,
@@ -44,18 +44,18 @@ local T = MiniTest.new_set({
         render = function(bufnr)
           vim.b[bufnr].render_count = (vim.b[bufnr].render_count or 0) + 1
         end,
-      }
-      package.loaded["pydeps.ui.diagnostics"] = {
+      })
+      helpers.stub_module("pydeps.ui.diagnostics", {
         clear = function() end,
         render = function() end,
-      }
-      package.loaded["pydeps.ui.info"] = {
+      })
+      helpers.stub_module("pydeps.ui.info", {
         show_at_cursor = function() end,
         close_hover = function() end,
         should_close_hover = function()
           return true
         end,
-      }
+      })
 
       require("pydeps").setup({
         auto_refresh = true,
