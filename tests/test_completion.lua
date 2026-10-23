@@ -463,77 +463,39 @@ T["completion - boundary conditions"] = function()
   vim.api.nvim_buf_delete(non_pyproject_buf, { force = true })
 end
 
-T["completion scan_strings - escape sequences"] = function()
-  reset_completion_modules()
-  -- Create a pyproject.toml buffer for testing
-  local dir = vim.fn.tempname()
-  vim.fn.mkdir(dir, "p")
-  local path = dir .. "/pyproject.toml"
-  local bufnr = vim.api.nvim_create_buf(true, false)
-  vim.api.nvim_buf_set_name(bufnr, path)
+T["completion finds the string under the cursor past other quotes"] = function()
+  with_pypi_stub(edit_pypi_stub, function()
+    local dir = create_project({
+      "[project]",
+      "dependencies = [",
+      '  "rich",',
+      "  ",
+      "]",
+    })
+    require("pydeps.config").options.completion = { pypi_search = true, pypi_search_min = 2 }
+    local bufnr = vim.api.nvim_get_current_buf()
 
-  -- empty string
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "" })
-  local result_empty = nil
-  require("pydeps.completion.core").complete(bufnr, { 1, 0 }, function(res)
-    result_empty = res
+    -- earlier strings on the line must not shift the quote pairing
+    local cases = {
+      { '  "rich", "req|",', '  "rich", "requests",' },
+      { [[  "x \"", "req|",]], [[  "x \"", "requests",]] },
+      { [[  "it's", 'req|',]], [[  "it's", 'requests',]] },
+      { '  "", "req|",', '  "", "requests",' },
+      { '  "rich", "req|', '  "rich", "requests' },
+    }
+    for _, case in ipairs(cases) do
+      MiniTest.expect.equality(complete_and_apply(bufnr, 4, case[1], "requests"), case[2])
+    end
+
+    -- outside any string
+    for _, marked in ipairs({ "  req|", "  |", '  "rich", req|' }) do
+      local col = marked:find("|", 1, true) - 1
+      vim.api.nvim_buf_set_lines(bufnr, 3, 4, false, { marked:sub(1, col) .. marked:sub(col + 2) })
+      MiniTest.expect.equality(#run_complete(bufnr, 4, col).items, 0)
+    end
+
+    cleanup(dir)
   end)
-  MiniTest.expect.equality(#(result_empty.items or {}), 0)
-
-  -- string with no quotes
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "no quotes here" })
-  local result_no_quotes = nil
-  require("pydeps.completion.core").complete(bufnr, { 1, 5 }, function(res)
-    result_no_quotes = res
-  end)
-  MiniTest.expect.equality(#(result_no_quotes.items or {}), 0)
-
-  -- simple quoted strings - should trigger completion
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "dependencies = [\"hello\", 'world']" })
-  local result_simple = nil
-  require("pydeps.completion.core").complete(bufnr, { 1, 18 }, function(res)
-    result_simple = res
-  end)
-  -- Should get items since we're inside a string in dependencies
-  MiniTest.expect.no_equality(result_simple, nil)
-
-  -- escaped quotes (backslash before quote)
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { [[dependencies = ["hello \"world\""]] })
-  local result_escaped = nil
-  require("pydeps.completion.core").complete(bufnr, { 1, 20 }, function(res)
-    result_escaped = res
-  end)
-  -- Should get items since we're inside a string
-  MiniTest.expect.no_equality(result_escaped, nil)
-
-  -- unclosed strings
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { 'dependencies = ["unclosed string' })
-  local result_unclosed = nil
-  require("pydeps.completion.core").complete(bufnr, { 1, 25 }, function(res)
-    result_unclosed = res
-  end)
-  -- Should handle gracefully
-  MiniTest.expect.no_equality(result_unclosed, nil)
-
-  -- single quotes inside double quotes
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { [[dependencies = ["hello's world"]] })
-  local result_nested = nil
-  require("pydeps.completion.core").complete(bufnr, { 1, 20 }, function(res)
-    result_nested = res
-  end)
-  MiniTest.expect.no_equality(result_nested, nil)
-
-  -- empty quoted strings
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { [[dependencies = ["", ""]] })
-  local result_empty_quotes = nil
-  require("pydeps.completion.core").complete(bufnr, { 1, 18 }, function(res)
-    result_empty_quotes = res
-  end)
-  -- Should handle empty strings gracefully
-  MiniTest.expect.no_equality(result_empty_quotes, nil)
-
-  vim.api.nvim_buf_delete(bufnr, { force = true })
-  vim.fn.delete(dir, "rf")
 end
 
 T["completion detect_context - edge cases"] = function()

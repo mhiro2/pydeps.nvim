@@ -1,12 +1,6 @@
 local MiniTest = require("mini.test")
 
-local T = MiniTest.new_set({
-  hooks = {
-    pre_case = function()
-      package.loaded["pydeps.completion.scan"] = nil
-    end,
-  },
-})
+local T = MiniTest.new_set()
 
 T["scan_strings handles escaped and unclosed strings"] = function()
   local scan = require("pydeps.completion.scan")
@@ -22,13 +16,21 @@ end
 T["string_context returns value and bounds inside a string"] = function()
   local scan = require("pydeps.completion.scan")
   local line = 'dependencies = ["requests>=2.0"]'
-  local col = line:find("quests")
+  local open_quote, close_quote = 17, 31
+  local expected = { value = "requests>=2.0", start_col = open_quote, end_col = close_quote, quote = '"' }
 
-  local ctx = scan.string_context(line, col)
-  MiniTest.expect.no_equality(ctx, nil)
-  MiniTest.expect.equality(ctx.value, "requests>=2.0")
-  MiniTest.expect.equality(ctx.start_col < ctx.end_col, true)
+  -- the cursor is inside from just after the opening quote up to the closing quote
+  MiniTest.expect.equality(scan.string_context(line, open_quote), nil)
+  MiniTest.expect.equality(scan.string_context(line, open_quote + 1), expected)
+  MiniTest.expect.equality(scan.string_context(line, close_quote), expected)
+  MiniTest.expect.equality(scan.string_context(line, close_quote + 1), nil)
   MiniTest.expect.equality(scan.string_context(line, 1), nil)
+
+  -- an unterminated string runs to the end of the line
+  MiniTest.expect.equality(
+    scan.string_context("dependencies = ['req", 21),
+    { value = "req", start_col = 17, end_col = 21, quote = "'" }
+  )
 end
 
 T["token_range expands around package and version tokens"] = function()

@@ -1,10 +1,7 @@
 ---@class PyDepsCompletionItemMeta
 ---@field detail? string
 ---@field label_details? table
----@field documentation? string|table
----@field insert_text? string
----@field new_text? string
----@field sort_text? string
+---@field new_text? string Text to insert instead of the label
 
 ---@class PyDepsCompletionPackageSource
 ---@field is_local? boolean
@@ -87,15 +84,6 @@ local function make_item(label, range, kind, meta)
     end
     if meta.label_details then
       item.labelDetails = meta.label_details
-    end
-    if meta.documentation then
-      item.documentation = meta.documentation
-    end
-    if meta.insert_text then
-      item.insertText = meta.insert_text
-    end
-    if meta.sort_text then
-      item.sortText = meta.sort_text
     end
   end
   return item

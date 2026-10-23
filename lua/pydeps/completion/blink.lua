@@ -16,29 +16,12 @@ function source:enabled()
 end
 
 ---@param ctx table
----@return integer, integer
-local function resolve_cursor(ctx)
-  local cursor = ctx and (ctx.cursor or ctx.pos or ctx.position) or nil
-  if type(cursor) == "table" then
-    local line = cursor[1] or cursor.line or cursor.row or cursor.lnum
-    local col = cursor[2] or cursor.col or cursor.character or cursor.colnr
-    if type(line) == "number" and line == 0 then
-      line = line + 1
-    end
-    if type(line) == "number" and type(col) == "number" then
-      return line, col
-    end
-  end
-  local win_cursor = vim.api.nvim_win_get_cursor(0)
-  return win_cursor[1], win_cursor[2]
-end
-
----@param ctx table
 ---@param callback fun(result: table)
 function source:get_completions(ctx, callback)
-  local bufnr = (ctx and ctx.bufnr) or vim.api.nvim_get_current_buf()
-  local line, col = resolve_cursor(ctx or {})
-  completion.complete(bufnr, { line, col }, function(res)
+  local bufnr = ctx and ctx.bufnr or vim.api.nvim_get_current_buf()
+  -- blink.cmp passes a 1-indexed row and 0-indexed byte column, like nvim_win_get_cursor().
+  local cursor = ctx and ctx.cursor or vim.api.nvim_win_get_cursor(0)
+  completion.complete(bufnr, { cursor[1], cursor[2] }, function(res)
     callback({
       items = res.items or {},
       is_incomplete_forward = res.isIncomplete or false,
