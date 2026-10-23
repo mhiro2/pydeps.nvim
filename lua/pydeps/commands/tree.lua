@@ -38,7 +38,7 @@ local function build_tree_args(tree_args, target)
   if tree_args.depth then
     add_if_supported("depth", uv_args, { "--depth", tostring(tree_args.depth) })
   end
-  if tree_args.invert then
+  if tree_args.reverse then
     add_if_supported("invert", uv_args, { "--invert" })
   end
   if tree_args.universal then
