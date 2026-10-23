@@ -1,5 +1,76 @@
 local M = {}
 
+---@type fun()[]
+local restores = {}
+
+--- Replace `tbl[key]` until the current case finishes, even when it fails.
+---@param tbl table
+---@param key any
+---@param value any
+function M.stub(tbl, key, value)
+  local original = tbl[key]
+  tbl[key] = value
+  table.insert(restores, function()
+    tbl[key] = original
+  end)
+end
+
+---@param name string
+---@param value any
+function M.stub_module(name, value)
+  M.stub(package.loaded, name, value)
+end
+
+--- Register cleanup that runs after the current case, even when it fails.
+---@param fn fun()
+function M.defer(fn)
+  table.insert(restores, fn)
+end
+
+---@return nil
+function M.restore_all()
+  local pending = restores
+  restores = {}
+  local first_err
+  for i = #pending, 1, -1 do
+    local ok, err = pcall(pending[i])
+    if not ok and not first_err then
+      first_err = err
+    end
+  end
+  if first_err then
+    error(first_err, 0)
+  end
+end
+
+--- Wait until `cond` holds and fail the case with `msg` otherwise.
+---@param cond fun(): boolean
+---@param msg string
+---@param timeout_ms? integer
+function M.wait_for(cond, msg, timeout_ms)
+  if not vim.wait(timeout_ms or 2000, cond, 5) then
+    error("timed out waiting for " .. msg, 2)
+  end
+end
+
+--- Let pending timers and scheduled callbacks run for `ms` milliseconds.
+---@param ms integer
+function M.drain(ms)
+  vim.wait(ms, function()
+    return false
+  end, 5)
+end
+
+---@return nil
+function M.wipe_other_buffers()
+  local current = vim.api.nvim_get_current_buf()
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if buf ~= current and vim.api.nvim_buf_is_valid(buf) then
+      pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    end
+  end
+end
+
 ---@return nil
 function M.close_extra_windows()
   local wins = vim.api.nvim_list_wins()
@@ -8,10 +79,42 @@ function M.close_extra_windows()
   end
 end
 
+--- MiniTest set whose `post_case` always undoes `stub`/`defer` registrations
+--- and drops buffers and windows left behind by the case.
+---@param opts? table
+---@return table
+function M.new_set(opts)
+  opts = opts or {}
+  local hooks = opts.hooks or {}
+  local post_case = hooks.post_case
+  hooks.post_case = function()
+    local first_err
+    -- Run every cleanup step even when an earlier one fails.
+    for _, step in ipairs({
+      post_case or function() end,
+      M.restore_all,
+      M.close_extra_windows,
+      function()
+        vim.cmd("enew!")
+      end,
+      M.wipe_other_buffers,
+    }) do
+      local ok, err = pcall(step)
+      if not ok and not first_err then
+        first_err = err
+      end
+    end
+    if first_err then
+      error(first_err, 0)
+    end
+  end
+  opts.hooks = hooks
+  return require("mini.test").new_set(opts)
+end
+
 ---@return table
 function M.create_test_set()
-  local MiniTest = require("mini.test")
-  return MiniTest.new_set({
+  return M.new_set({
     hooks = {
       pre_case = function()
         M.close_extra_windows()

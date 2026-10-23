@@ -10,6 +10,13 @@ local T = MiniTest.new_set({
       package.loaded["pydeps"] = nil
       package.loaded["pydeps.core.state"] = nil
 
+      -- A real environment probe finishes later and emits PyDepsEnvUpdated,
+      -- adding a refresh the cases do not expect.
+      package.loaded["pydeps.core.env"] = {
+        get = function()
+          return {}
+        end,
+      }
       package.loaded["pydeps.core.cache"] = {
         get_pyproject = function()
           return {

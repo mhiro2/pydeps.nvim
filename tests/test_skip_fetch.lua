@@ -133,6 +133,9 @@ local function create_project(lines)
   local path = dir .. "/pyproject.toml"
   vim.fn.writefile(lines, path)
   helpers.create_uv_lock(dir, { requests = "2.31.0" })
+  -- Load the lockfile up front: an async load finishing mid-test emits
+  -- PyDepsLockfileUpdated, whose refresh is allowed to fetch.
+  require("pydeps.core.cache").get_lockfile(dir, { sync = true })
   -- Suppress autocmds on edit so each test controls exactly when BufReadPost
   -- fires. Without this, vim.cmd("edit ...") triggers a real BufReadPost
   -- that pre-warms the pypi stub cache, making subsequent skip_fetch /
@@ -170,28 +173,16 @@ T["BufWritePost does not fetch PyPI metadata"] = function()
   })
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
+  local ns = require("pydeps.ui.virtual_text").ns
 
-  -- Warm up via BufReadPost so the autocmd path is exercised at least once.
-  vim.api.nvim_exec_autocmds("BufReadPost", { buffer = bufnr })
-  vim.wait(100, function()
-    return false
-  end)
-
-  -- Clear the stub cache so get_cached returns nil. Without this, the
-  -- warm-up has populated `pypi_fetched["requests"]`, which would make
-  -- BufWritePost's render skip queue_pypi_request even if skip_fetch were
-  -- broken — i.e. the assertion below would pass vacuously.
-  pypi_fetched = {}
-
-  -- Reset counter and fire BufWritePost. With skip_fetch=true wired through,
-  -- this must not call pypi.get even when get_cached returns nil.
-  pypi_get_calls = 0
+  -- The stub cache starts empty, so a render that ignored skip_fetch would
+  -- call pypi.get here.
   vim.api.nvim_exec_autocmds("BufWritePost", { buffer = bufnr })
-  vim.wait(150, function()
-    return false
-  end)
+  helpers.drain(150)
 
   MiniTest.expect.equality(pypi_get_calls, 0)
+  -- Positive control: the write did refresh the buffer.
+  MiniTest.expect.equality(#vim.api.nvim_buf_get_extmarks(bufnr, ns, 0, -1, {}) > 0, true)
   vim.fn.delete(dir, "rf")
 end
 

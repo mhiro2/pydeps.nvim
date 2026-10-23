@@ -54,7 +54,7 @@ local function find_item(items, label)
 end
 
 T["completion contexts"] = function()
-  package.loaded["pydeps.providers.pypi"] = {
+  helpers.stub_module("pydeps.providers.pypi", {
     search = function(_, cb)
       cb({ "pytest", "requests-toolbelt" })
     end,
@@ -72,7 +72,7 @@ T["completion contexts"] = function()
     sorted_versions = function()
       return { "2.1.0", "2.0.0" }
     end,
-  }
+  })
   reset_completion_modules()
 
   local dir = create_project({
@@ -101,11 +101,8 @@ T["completion contexts"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   local cache = require("pydeps.core.cache")
-  cache.get_lockfile(dir)
-  vim.wait(200, function()
-    local data = cache.get_lockfile(dir)
-    return data.resolved and data.resolved.localdep ~= nil
-  end, 10)
+  local lock_data = cache.get_lockfile(dir, { sync = true })
+  MiniTest.expect.equality(lock_data.resolved.localdep, "0.1.0")
 
   local line = vim.api.nvim_buf_get_lines(bufnr, 2, 3, false)[1]
   local start = line:find("req")
