@@ -6,7 +6,7 @@ local T = helpers.create_test_set()
 
 ---@param view_overrides? table
 ---@param opts? PyDepsRenderOptions
----@return integer, integer
+---@return integer, integer, string[]
 local function apply_highlight(view_overrides, opts)
   info_helpers.stub_cache()
 
@@ -19,76 +19,117 @@ local function apply_highlight(view_overrides, opts)
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   highlight.apply(buf, view.dep, lines, status)
-  return buf, highlight.namespace()
+  return buf, highlight.namespace(), lines
 end
 
-T["highlight marks package title"] = function()
-  local buf, ns = apply_highlight()
-  MiniTest.expect.equality(info_helpers.has_highlight(buf, ns, "PyDepsInfoPackage"), true)
-  vim.api.nvim_buf_delete(buf, { force = true })
+---@param lines string[]
+---@param label string
+---@return string
+local function label_prefix(lines, label)
+  for _, line in ipairs(lines) do
+    local prefix = line:match("^(%S*%s*" .. label .. ")%s")
+    if prefix then
+      return prefix
+    end
+  end
+  error("no " .. label .. " line")
 end
 
-T["highlight marks description and labels"] = function()
-  local buf, ns = apply_highlight()
-  MiniTest.expect.equality(info_helpers.has_highlight(buf, ns, "PyDepsInfoDescription"), true)
-  MiniTest.expect.equality(info_helpers.has_highlight(buf, ns, "PyDepsInfoLabel"), true)
-  vim.api.nvim_buf_delete(buf, { force = true })
+-- Each check names the exact text a highlight must cover and the line it sits on.
+local cases = {
+  {
+    name = "default view",
+    checks = function(lines)
+      return {
+        { text = lines[1], group = "PyDepsInfoPackage" },
+        { text = "HTTP library", group = "PyDepsInfoDescription" },
+        { text = label_prefix(lines, "spec"), group = "PyDepsInfoLabel" },
+        { text = label_prefix(lines, "lock"), group = "PyDepsInfoLabel" },
+        { text = label_prefix(lines, "latest"), group = "PyDepsInfoLabel" },
+        { text = label_prefix(lines, "status"), group = "PyDepsInfoLabel" },
+        { text = label_prefix(lines, "deps"), group = "PyDepsInfoLabel" },
+        { text = label_prefix(lines, "pypi"), group = "PyDepsInfoLabel" },
+        { text = "active", group = "PyDepsInfoStatusOk", line = "status" },
+        { text = "https://pypi.org/pypi/testpkg", group = "PyDepsInfoUrl" },
+        { text = "(up-to-date)", group = "PyDepsInfoSuffixOk" },
+      }
+    end,
+  },
+  {
+    name = "extras",
+    view = function()
+      local dep = info_helpers.dep({ spec = "testpkg[fast]>=1.0", group = "optional:security" })
+      return { dep = dep, spec = dep.spec, group = dep.group }
+    end,
+    checks = function(lines)
+      return {
+        { text = label_prefix(lines, "extras"), group = "PyDepsInfoLabel" },
+        { text = "security, fast", group = "PyDepsInfoPill" },
+      }
+    end,
+  },
+  {
+    name = "update available",
+    view = function()
+      return {
+        latest = "2.0.0",
+        status_kind = "update",
+        status_text = "update available",
+        show_latest_warning = true,
+        lock_status = vim.NIL,
+      }
+    end,
+    checks = function()
+      return {
+        { text = "update available", group = "PyDepsInfoStatusUpdate", line = "status" },
+        { text = "(update available)", group = "PyDepsInfoSuffixWarn", line = "latest" },
+      }
+    end,
+  },
+  {
+    name = "missing lockfile",
+    view = function()
+      return { resolved = vim.NIL }
+    end,
+    opts = { lockfile_missing = true },
+    checks = function()
+      return {
+        { text = "(missing)", group = "PyDepsInfoSuffixError", line = "lock" },
+      }
+    end,
+  },
+  {
+    name = "multibyte description",
+    view = function()
+      return { meta = { info = { version = "1.0.0", summary = "HTTP ライブラリ" }, releases = {} } }
+    end,
+    checks = function()
+      return {
+        { text = "HTTP ライブラリ", group = "PyDepsInfoDescription" },
+      }
+    end,
+  },
+}
+
+for _, case in ipairs(cases) do
+  T["highlight covers exact ranges: " .. case.name] = function()
+    local buf, ns, lines = apply_highlight(case.view and case.view() or nil, case.opts)
+
+    for _, check in ipairs(case.checks(lines)) do
+      local line_pattern = check.line and ("%s" .. check.line .. "%s") or nil
+      local groups = info_helpers.groups_on(buf, ns, check.text, line_pattern)
+      MiniTest.expect.equality({ check.text, groups }, { check.text, { check.group } })
+    end
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
 end
 
-T["highlight marks extras as pills"] = function()
-  local dep = info_helpers.dep({
-    spec = "testpkg[fast]>=1.0",
-    group = "optional:security",
-  })
-  local buf, ns = apply_highlight({
-    dep = dep,
-    spec = dep.spec,
-    group = dep.group,
-  })
+T["highlight marks no description without a summary"] = function()
+  local buf, ns = apply_highlight({ meta = { info = { version = "1.0.0", summary = "" }, releases = {} } })
 
-  MiniTest.expect.equality(info_helpers.has_highlight(buf, ns, "PyDepsInfoPill"), true)
-  vim.api.nvim_buf_delete(buf, { force = true })
-end
-
-T["highlight marks status value with kind-specific group"] = function()
-  local buf, ns = apply_highlight({
-    status_kind = "update",
-    status_text = "update available",
-  })
-
-  MiniTest.expect.equality(info_helpers.has_highlight(buf, ns, "PyDepsInfoStatusUpdate"), true)
-  vim.api.nvim_buf_delete(buf, { force = true })
-end
-
-T["highlight marks PyPI URLs"] = function()
-  local buf, ns = apply_highlight()
-  MiniTest.expect.equality(info_helpers.has_highlight(buf, ns, "PyDepsInfoUrl"), true)
-  vim.api.nvim_buf_delete(buf, { force = true })
-end
-
-T["highlight marks ok suffixes"] = function()
-  local buf, ns = apply_highlight()
-  MiniTest.expect.equality(info_helpers.has_highlight(buf, ns, "PyDepsInfoSuffixOk"), true)
-  vim.api.nvim_buf_delete(buf, { force = true })
-end
-
-T["highlight marks warn suffixes"] = function()
-  local buf, ns = apply_highlight({
-    latest = "2.0.0",
-    status_kind = "update",
-    status_text = "update available",
-    show_latest_warning = true,
-    lock_status = nil,
-  })
-
-  MiniTest.expect.equality(info_helpers.has_highlight(buf, ns, "PyDepsInfoSuffixWarn"), true)
-  vim.api.nvim_buf_delete(buf, { force = true })
-end
-
-T["highlight marks error suffixes for missing values"] = function()
-  local buf, ns = apply_highlight({ resolved = vim.NIL }, { lockfile_missing = true })
-
-  MiniTest.expect.equality(info_helpers.has_highlight(buf, ns, "PyDepsInfoSuffixError"), true)
+  for _, hl in ipairs(info_helpers.highlights(buf, ns)) do
+    MiniTest.expect.no_equality(hl.group, "PyDepsInfoDescription")
+  end
   vim.api.nvim_buf_delete(buf, { force = true })
 end
 

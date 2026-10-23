@@ -10,6 +10,7 @@ local M = {}
 ---@field lockfile_loading? boolean
 ---@field root? string
 ---@field skip_fetch? boolean
+---@field metadata_fetched? boolean PyPI lookup finished, so missing metadata means not found
 
 ---@class PyDepsStatusResult
 ---@field kind "ok"|"update"|"warn"|"error"|"inactive"|"unknown"
@@ -99,24 +100,13 @@ local function get_deps_count(lock_data, dep_name)
   return #pkg.dependencies
 end
 
+---Status text for the info window; only a user-configured empty status text falls back.
 ---@param status PyDepsStatusResult
 ---@return string
 function M.format_status_text(status)
   if status.text and status.text ~= "" then
     return status.text
   end
-  if status.kind == "ok" then
-    return "active"
-  elseif status.kind == "update" then
-    return "update available"
-  elseif status.kind == "warn" then
-    return "lock mismatch"
-  elseif status.kind == "error" then
-    return "yanked"
-  elseif status.kind == "inactive" then
-    return "inactive"
-  end
-
   return "unknown"
 end
 
@@ -168,7 +158,8 @@ function M.build_lines(view, opts)
     table.insert(lines, format_line(ui_shared.icon_for("lock"), "lock", "(not found)"))
   end
 
-  local latest_version = view.latest or (view.meta and "(not found)" or "(loading...)")
+  local latest_version = view.latest
+    or ((view.meta or (opts and opts.metadata_fetched)) and "(not found)" or "(loading...)")
   local latest_suffix = status.show_latest_warning and "(update available)" or nil
   table.insert(lines, format_line(ui_shared.icon_for("latest"), "latest", latest_version, latest_suffix))
 

@@ -1,3 +1,5 @@
+local helpers = require("tests.test_helpers")
+
 local M = {}
 
 ---@param target table
@@ -85,26 +87,74 @@ function M.stub_pypi(meta, is_yanked)
       releases = {},
     }
 
-  package.loaded["pydeps.providers.pypi"] = {
+  helpers.stub_module("pydeps.providers.pypi", {
     get = function(_, cb)
       cb(result)
     end,
     is_yanked = function()
       return is_yanked == true
     end,
-  }
+  })
 end
 
 ---@return nil
 function M.stub_pypi_not_found()
-  package.loaded["pydeps.providers.pypi"] = {
+  helpers.stub_module("pydeps.providers.pypi", {
     get = function(_, cb)
       cb(nil)
     end,
     is_yanked = function()
       return false
     end,
+  })
+end
+
+--- Stub PyPI so each `get` waits until the test releases its callback.
+---@return { name: string, resolve: fun(meta: PyDepsPyPIMeta?) }[]
+function M.stub_pypi_deferred()
+  local requests = {}
+  helpers.stub_module("pydeps.providers.pypi", {
+    get = function(name, cb)
+      table.insert(requests, { name = name, resolve = cb })
+    end,
+    is_yanked = function()
+      return false
+    end,
+  })
+  return requests
+end
+
+--- Parse uv.lock text with the real lockfile parser.
+---@param lines string[]
+---@return PyDepsLockfileData
+function M.lock_data(lines)
+  local path = vim.fn.tempname()
+  vim.fn.writefile(lines, path)
+  local data = require("pydeps.sources.lockfile").parse_full(path)
+  vim.fn.delete(path)
+  return data
+end
+
+---@param name string
+---@param version string
+---@param dependencies? string[]
+---@return string[]
+function M.lock_package_lines(name, version, dependencies)
+  local lines = {
+    "[[package]]",
+    'name = "' .. name .. '"',
+    'version = "' .. version .. '"',
+    'source = { registry = "https://pypi.org/simple" }',
   }
+  if dependencies and #dependencies > 0 then
+    table.insert(lines, "dependencies = [")
+    for _, dep in ipairs(dependencies) do
+      table.insert(lines, '    { name = "' .. dep .. '" },')
+    end
+    table.insert(lines, "]")
+  end
+  table.insert(lines, "")
+  return lines
 end
 
 ---@param opts? { dep?: PyDepsDependency, lock_data?: PyDepsLockfileData, missing_lockfile?: boolean, lockfile_loading?: boolean }
@@ -112,21 +162,22 @@ end
 function M.stub_cache(opts)
   opts = opts or {}
   local dep = opts.dep or M.dep()
-  local lock_data = opts.lock_data or {
-    resolved = {
-      [dep.name] = "1.0.0",
-    },
-    packages = {},
-  }
+  local lock_data = opts.lock_data
+    or M.lock_data(vim.list_extend({ "version = 1", "" }, M.lock_package_lines(dep.name, "1.0.0")))
 
-  package.loaded["pydeps.core.cache"] = {
+  helpers.stub_module("pydeps.core.cache", {
     get_pyproject = function()
       return { dep }
     end,
     get_lockfile = function()
       return lock_data, opts.missing_lockfile == true, opts.lockfile_loading == true
     end,
-  }
+  })
+  helpers.stub_module("pydeps.core.env", {
+    get = function()
+      return {}
+    end,
+  })
 end
 
 ---@return nil
@@ -210,17 +261,46 @@ end
 
 ---@param buf integer
 ---@param ns integer
----@param group string
----@return boolean
-function M.has_highlight(buf, ns, group)
-  local marks = vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })
-  for _, mark in ipairs(marks) do
-    local details = mark[4]
-    if details and details.hl_group == group then
-      return true
+---@return { row: integer, start_col: integer, end_col: integer, group: string }[]
+function M.highlights(buf, ns)
+  local result = {}
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })) do
+    local details = mark[4] or {}
+    if details.hl_group then
+      table.insert(result, {
+        row = mark[2],
+        start_col = mark[3],
+        end_col = details.end_col,
+        group = details.hl_group,
+      })
     end
   end
-  return false
+  return result
+end
+
+--- Return the highlight groups covering exactly `text` on the first line that contains it.
+---@param buf integer
+---@param ns integer
+---@param text string
+---@param line_pattern? string Lua pattern selecting the line; defaults to the text itself
+---@return string[]
+function M.groups_on(buf, ns, text, line_pattern)
+  for row, line in ipairs(vim.api.nvim_buf_get_lines(buf, 0, -1, false)) do
+    if line:find(line_pattern or vim.pesc(text)) then
+      local start = line:find(text, 1, true)
+      local groups = {}
+      if start then
+        for _, hl in ipairs(M.highlights(buf, ns)) do
+          if hl.row == row - 1 and hl.start_col == start - 1 and hl.end_col == start - 1 + #text then
+            table.insert(groups, hl.group)
+          end
+        end
+      end
+      table.sort(groups)
+      return groups
+    end
+  end
+  return {}
 end
 
 return M
