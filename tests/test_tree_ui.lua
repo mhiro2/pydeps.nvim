@@ -43,7 +43,8 @@ local extract_cases = {
       "some-package-name 1.0.0",
       "some.package.name 1.0.0",
     },
-    expected = { "some_package_name", "some-package-name", "some.package.name" },
+    -- uv may print any spelling; all of them name the same package.
+    expected = { "some-package-name", "some-package-name", "some-package-name" },
   },
   {
     name = "pure asterisk lines",
@@ -224,6 +225,51 @@ T["setup_keymaps badges from the project and acts on the package under the curso
   MiniTest.expect.equality(shown, {
     { dep = { name = "requests", spec = "===2.31.0" }, version = "2.31.0", opts = { lockfile_missing = false } },
   })
+end
+
+T["setup_keymaps matches declared names to uv's spelling"] = function()
+  local dir = vim.fn.tempname()
+  vim.fn.mkdir(dir, "p")
+  vim.fn.writefile({
+    "[project]",
+    'dependencies = ["Requests>=2", "Charset_Normalizer[unicode_backport]>=3"]',
+  }, dir .. "/pyproject.toml")
+  helpers.create_uv_lock(dir)
+  helpers.defer(function()
+    vim.fn.delete(dir, "rf")
+  end)
+  helpers.stub_module("pydeps.core.env", {
+    get = function()
+      return {}
+    end,
+  })
+  require("pydeps.core.cache").get_lockfile(dir, { sync = true })
+  local shown = {}
+  helpers.stub_module("pydeps.ui.info", {
+    show = function(dep, version)
+      table.insert(shown, { dep.name, version })
+    end,
+  })
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, tree_lines)
+  vim.api.nvim_set_current_buf(buf)
+  tree_ui.setup_keymaps(buf, tree_lines, { root = dir })
+
+  MiniTest.expect.equality(badge_marks(buf), {
+    [0] = { { "[direct]", "PyDepsBadgeDirect" } },
+    [1] = { { "[direct]", "PyDepsBadgeDirect" }, { "[extra:unicode_backport]", "PyDepsBadgeExtra" } },
+  })
+
+  local info_map
+  for _, map in ipairs(vim.api.nvim_buf_get_keymap(buf, "n")) do
+    if map.lhs == "i" then
+      info_map = map.callback
+    end
+  end
+  vim.api.nvim_win_set_cursor(0, { 2, 0 })
+  info_map()
+  MiniTest.expect.equality(shown, { { "charset-normalizer", "3.3.2" } })
 end
 
 T["setup_keymaps cleans up when the tree buffer is wiped"] = function()

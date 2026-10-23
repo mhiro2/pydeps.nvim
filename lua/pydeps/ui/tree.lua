@@ -1,4 +1,5 @@
 local lockfile = require("pydeps.sources.lockfile")
+local util = require("pydeps.util")
 local M = {}
 
 ---@type table<integer, table<integer, string>>
@@ -108,7 +109,7 @@ function M.extract_packages(lines)
       -- Extract package name (followed by version number - space and optional "v" prefix and digit)
       local package_name = stripped:match("^([%w%._%-]+)%s+v?%d")
       if package_name and package_name ~= "" then
-        result[line_num] = package_name
+        result[line_num] = util.normalize_package_name(package_name)
       end
     end
   end

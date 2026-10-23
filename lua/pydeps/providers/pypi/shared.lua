@@ -1,4 +1,5 @@
 local config = require("pydeps.config")
+local util = require("pydeps.util")
 
 local M = {}
 
@@ -8,7 +9,7 @@ M.SEARCH_FAILURE_BACKOFF = 60
 ---@param name? string
 ---@return string
 function M.normalize(name)
-  return (name or ""):lower()
+  return util.normalize_package_name(name or "")
 end
 
 ---@param name string

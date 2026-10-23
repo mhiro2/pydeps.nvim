@@ -265,6 +265,32 @@ T["completion edits replace only the token at the cursor"] = function()
   end)
 end
 
+T["completion keeps normalized names matchable by the typed spelling"] = function()
+  local stub = vim.deepcopy(edit_pypi_stub)
+  stub.search = function(_, cb)
+    cb({ "zope-interface", "zope-event" })
+  end
+  with_pypi_stub(stub, function()
+    local dir = create_project({ "[project]", "dependencies = [", '  "zope.i",', "]" })
+    local config = require("pydeps.config")
+    config.options.completion = { pypi_search = true, pypi_search_min = 2, max_results = 30 }
+    local bufnr = vim.api.nvim_get_current_buf()
+
+    local result = run_complete(bufnr, 3, #'  "zope.i')
+    local item = find_item(result.items, "zope-interface")
+    MiniTest.expect.no_equality(item, nil)
+    MiniTest.expect.equality(item.filterText, "zope.interface")
+    MiniTest.expect.equality(item.textEdit.newText, "zope-interface")
+    -- Without a spelling difference the label already matches.
+    vim.api.nvim_buf_set_lines(bufnr, 2, 3, false, { '  "zope-",' })
+    local plain = find_item(run_complete(bufnr, 3, #'  "zope-').items, "zope-event")
+    MiniTest.expect.no_equality(plain, nil)
+    MiniTest.expect.equality(plain.filterText, nil)
+
+    cleanup(dir)
+  end)
+end
+
 T["completion offers marker fields and values"] = function()
   with_pypi_stub(edit_pypi_stub, function()
     local dir = create_project({

@@ -8,6 +8,10 @@ T["parse_requirement_name extracts name"] = function()
   MiniTest.expect.equality(util.parse_requirement_name("requests>=2.0"), "requests")
   MiniTest.expect.equality(util.parse_requirement_name("Foo-Bar[extra]>=1.0; python_version>='3.11'"), "foo-bar")
   MiniTest.expect.equality(util.parse_requirement_name(""), nil)
+  -- PEP 503: case and runs of `-`, `_` and `.` do not distinguish packages.
+  MiniTest.expect.equality(util.parse_requirement_name("Charset_Normalizer>=3"), "charset-normalizer")
+  MiniTest.expect.equality(util.parse_requirement_name("zope.interface"), "zope-interface")
+  MiniTest.expect.equality(util.parse_requirement_name("a__b-.c"), "a-b-c")
 end
 
 T["parse_requirement_extras extracts extras"] = function()

@@ -128,6 +128,14 @@ function M.count_char(s, char)
   return count
 end
 
+---Normalize a distribution name as PEP 503 does, so `Foo_Bar`, `foo.bar`
+---and `foo-bar` name the same package.
+---@param name string
+---@return string
+function M.normalize_package_name(name)
+  return (name:lower():gsub("[-_.]+", "-"))
+end
+
 ---@param spec? string
 ---@return string?
 function M.parse_requirement_name(spec)
@@ -140,7 +148,7 @@ function M.parse_requirement_name(spec)
   if not name then
     return nil
   end
-  return name:lower()
+  return M.normalize_package_name(name)
 end
 
 ---@param spec? string

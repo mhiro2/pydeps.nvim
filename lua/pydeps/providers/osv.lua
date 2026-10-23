@@ -47,11 +47,7 @@ local cache = {}
 ---@param name? string
 ---@return string?
 local function normalize_name(name)
-  local normalized = util.parse_requirement_name(name)
-  if not normalized then
-    return nil
-  end
-  return normalized:lower()
+  return util.parse_requirement_name(name)
 end
 
 ---@param version any

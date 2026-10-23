@@ -296,7 +296,7 @@ T["parse uv.lock - special characters"] = function()
   }, ".lock")
   local result_special_name = lockfile.parse_full(special_name_path)
   helpers.cleanup_temp_file(special_name_path)
-  MiniTest.expect.equality(result_special_name.resolved["my_awesome-package"], "1.0.0")
+  MiniTest.expect.equality(result_special_name.resolved["my-awesome-package"], "1.0.0")
 end
 
 T["universal forks preserve identities and project only a known environment"] = function()
