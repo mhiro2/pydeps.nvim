@@ -326,8 +326,7 @@ local function set_mark(bufnr, dep, chunks, col)
   -- debounced re-render after a PyPI fetch), so skip rows whose parsed
   -- string no longer sits at the recorded columns.
   local line_text = vim.api.nvim_buf_get_lines(bufnr, lnum, lnum + 1, false)[1] or ""
-  local token = dep.col_end and line_text:sub((dep.col or 0) + 1, dep.col_end) or ""
-  if token:match("^[\"'](.*)[\"']$") ~= dep.spec then
+  if not dep.col_end or line_text:sub((dep.col or 0) + 1, dep.col_end) ~= dep.literal then
     return
   end
   vim.api.nvim_buf_set_extmark(bufnr, M.ns, lnum, dep.col, {
@@ -390,6 +389,7 @@ local function create_dependency_view(
   view.col = math.max((dep.col_start or 1) - 1, 0)
   view.line = dep.line
   view.col_end = dep.col_end
+  view.literal = dep.literal
   view.col_end_display = col_end_display
   view.comment_col = dep.comment_col
   view.comment_end_display = comment_end_display

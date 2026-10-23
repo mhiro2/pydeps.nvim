@@ -1,4 +1,5 @@
--- Decode the strings, arrays and inline tables emitted in uv lockfiles.
+-- Decode TOML strings, arrays and inline tables as written in uv lockfiles
+-- and pyproject.toml.
 local M = {}
 
 function M.parse(text)

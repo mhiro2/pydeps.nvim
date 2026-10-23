@@ -57,6 +57,34 @@ T["parse_buffer records string columns and trailing comment columns"] = function
   })
 end
 
+T["parse_buffer decodes TOML escapes in the requirement"] = function()
+  local ts_toml = load_ts_toml()
+  local markers = require("pydeps.core.markers")
+  local bufnr = toml_buffer({
+    "[project]",
+    "dependencies = [",
+    '  "kernel; platform_version == \\"#3\\"",',
+    "  'win; os_name == \"nt\"',",
+    '  "uni\\u0063ode",',
+    "]",
+  })
+
+  local deps = ts_toml.parse_buffer(bufnr)
+  local actual = {}
+  for _, dep in ipairs(deps) do
+    actual[#actual + 1] = { dep.name, dep.spec, dep.literal }
+  end
+  MiniTest.expect.equality(actual, {
+    { "kernel", 'kernel; platform_version == "#3"', '"kernel; platform_version == \\"#3\\""' },
+    -- literal strings keep backslash-free text as written
+    { "win", 'win; os_name == "nt"', "'win; os_name == \"nt\"'" },
+    { "unicode", "unicode", '"uni\\u0063ode"' },
+  })
+  -- With the backslashes left in, the marker failed to parse.
+  local marker = require("pydeps.ui.shared").extract_marker(deps[1].spec)
+  MiniTest.expect.equality(markers.evaluate(marker, { platform_version = "#3" }), true)
+end
+
 T["parse_buffer handles dependency-groups"] = function()
   local ts_toml = load_ts_toml()
   local bufnr = toml_buffer({

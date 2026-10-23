@@ -63,6 +63,29 @@ T["replace_dependency keeps neighbours on an inline array"] = function()
   )
 end
 
+T["replace_dependency escapes the spec for the string it writes"] = function()
+  local edit = require("pydeps.sources.pyproject_edit")
+  local bufnr = toml_buffer({
+    "[project]",
+    "dependencies = [",
+    '  "kernel>=1; platform_version == \\"#3\\"",',
+    "  'win>=1; os_name == \"nt\"',",
+    "  'quoted>=1',",
+    "]",
+  })
+
+  edit.replace_dependency(bufnr, parsed_dep(bufnr, "kernel"), 'kernel>=2; platform_version == "#3"')
+  edit.replace_dependency(bufnr, parsed_dep(bufnr, "win"), 'win>=2; os_name == "nt"')
+  -- A literal string cannot hold a single quote, so it becomes a basic string.
+  edit.replace_dependency(bufnr, parsed_dep(bufnr, "quoted"), "quoted>=2; platform_version == '#3'")
+
+  MiniTest.expect.equality(vim.api.nvim_buf_get_lines(bufnr, 2, 5, false), {
+    '  "kernel>=2; platform_version == \\"#3\\"",',
+    "  'win>=2; os_name == \"nt\"',",
+    "  \"quoted>=2; platform_version == '#3'\",",
+  })
+end
+
 T["replace_dependency rejects a dependency without a position"] = function()
   local edit = require("pydeps.sources.pyproject_edit")
   local bufnr = toml_buffer({ "[project]", 'dependencies = ["requests"]' })

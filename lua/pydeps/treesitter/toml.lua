@@ -3,13 +3,15 @@
 
 ---@class PyDepsDependency
 ---@field name string
----@field spec string
+---@field spec string Requirement with TOML escapes decoded
+---@field literal string The string literal as written, including quotes
 ---@field line integer
 ---@field col_start integer
 ---@field col_end integer
 ---@field comment_col? integer
 ---@field group? string
 
+local lock_value = require("pydeps.sources.lock_value")
 local util = require("pydeps.util")
 
 local M = {}
@@ -204,8 +206,11 @@ local function parse_array_dependencies(bufnr, array_node, section, comment_map)
       local start_row, start_col, _, end_col = child:range()
       local value = vim.treesitter.get_node_text(child, bufnr)
 
-      -- Remove quotes
-      local unquoted = value:match("^[\"'](.+)[\"']$") or value
+      -- Decode escapes so `\"` in a marker reaches the evaluator as `"`.
+      local unquoted = lock_value.parse(value)
+      if type(unquoted) ~= "string" then
+        unquoted = value:match("^[\"'](.+)[\"']$") or value
+      end
 
       local name = util.parse_requirement_name(unquoted)
       if name then
@@ -213,6 +218,7 @@ local function parse_array_dependencies(bufnr, array_node, section, comment_map)
         table.insert(deps, {
           name = name,
           spec = unquoted,
+          literal = value,
           line = start_row + 1, -- Convert to 1-indexed
           col_start = start_col + 1,
           col_end = end_col,
