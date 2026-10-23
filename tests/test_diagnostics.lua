@@ -75,7 +75,7 @@ local function render_buffer(lines)
   helpers.setup_buffer(lines)
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  return bufnr, require("pydeps.sources.pyproject").parse(nil, nil, bufnr)
+  return bufnr, require("pydeps.sources.pyproject").parse(nil, bufnr)
 end
 
 ---@return table
@@ -120,7 +120,7 @@ T["diagnostics for marker, lock diff, pinned, yanked"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = {
     markerpkg = "0.1.0",
     pinnedpkg = "1.1.0",
@@ -181,7 +181,7 @@ T["diagnostics for pin not found on PyPI"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = {
     notfoundpkg = "1.1.0",
   }
@@ -219,7 +219,7 @@ T["diagnostic range uses exclusive end_col"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local dep = deps[1]
   local resolved = {
     pinnedpkg = "1.1.0",

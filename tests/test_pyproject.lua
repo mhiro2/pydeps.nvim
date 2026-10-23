@@ -22,7 +22,7 @@ T["parse dependencies and optional groups"] = function()
   helpers.setup_buffer(lines)
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   MiniTest.expect.equality(#deps, 5)
 
   MiniTest.expect.equality(deps[1].name, "requests")
@@ -67,7 +67,7 @@ T["parse dependencies with comments and empty lines"] = function()
   helpers.setup_buffer(lines)
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   MiniTest.expect.equality(#deps, 4)
 
   MiniTest.expect.equality(deps[1].name, "requests")
@@ -115,8 +115,8 @@ T["parse notifies once when the TOML parser is unavailable"] = function()
   helpers.setup_buffer({ "[project]", 'dependencies = ["requests"]' })
   local bufnr = vim.api.nvim_get_current_buf()
 
-  MiniTest.expect.equality(pyproject.parse(nil, nil, bufnr), {})
-  MiniTest.expect.equality(pyproject.parse(nil, nil, bufnr), {})
+  MiniTest.expect.equality(pyproject.parse(nil, bufnr), {})
+  MiniTest.expect.equality(pyproject.parse(nil, bufnr), {})
   MiniTest.expect.equality(messages, { { "pydeps: Tree-sitter TOML parser is required", vim.log.levels.ERROR } })
 end
 

@@ -16,7 +16,7 @@ end
 ---@param name string
 ---@return PyDepsDependency
 local function parsed_dep(bufnr, name)
-  for _, dep in ipairs(require("pydeps.sources.pyproject").parse(nil, nil, bufnr)) do
+  for _, dep in ipairs(require("pydeps.sources.pyproject").parse(nil, bufnr)) do
     if dep.name == name then
       return dep
     end

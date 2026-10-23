@@ -10,10 +10,9 @@ if not ok_ts then
 end
 
 ---@param path? string
----@param lines? string[]
 ---@param bufnr? integer
 ---@return PyDepsDependency[]
-function M.parse(path, lines, bufnr)
+function M.parse(path, bufnr)
   if not ts_toml or not ts_toml.is_available() then
     if not _notified_unavailable then
       vim.notify("pydeps: Tree-sitter TOML parser is required", vim.log.levels.ERROR)
@@ -24,15 +23,6 @@ function M.parse(path, lines, bufnr)
 
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
     return ts_toml.parse_buffer(bufnr)
-  end
-
-  if lines then
-    local tmp = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_lines(tmp, 0, -1, false, lines)
-    vim.bo[tmp].filetype = "toml"
-    local deps = ts_toml.parse_buffer(tmp)
-    vim.api.nvim_buf_delete(tmp, { force = true })
-    return deps
   end
 
   if path and vim.fn.filereadable(path) == 1 then

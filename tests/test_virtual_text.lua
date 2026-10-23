@@ -74,7 +74,7 @@ T["inline badge moves after comment"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = {
     short = "1.0.0",
     averyverylongpackage = "1.0.0",
@@ -100,7 +100,7 @@ T["inline badge moves after wide comment"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = { wide = "1.0.0" }
 
   virtual_text.render(bufnr, deps, resolved, { lockfile_missing = false })
@@ -135,7 +135,7 @@ T["inline badge ignores hashes inside strings"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
 
   virtual_text.render(
     bufnr,
@@ -166,7 +166,7 @@ T["inline badge aligns without comments"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = {
     short = "1.0.0",
     averyverylongpackage = "1.0.0",
@@ -200,7 +200,7 @@ T["lock mismatch shows pinned version in badge"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = {
     pinnedpkg = "1.1.0",
   }
@@ -275,7 +275,7 @@ T["unresolved pinned dependency is not classified as lock mismatch"] = function(
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
 
   virtual_text.render(bufnr, deps, {}, { lockfile_missing = false })
 
@@ -339,7 +339,7 @@ T["pin not found shows message when version not on PyPI"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = {
     notfoundpkg = "1.1.0",
   }
@@ -374,7 +374,7 @@ T["render survives stale col after buffer edit"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = { averyverylongpackage = "1.0.0" }
 
   -- Simulate user editing the dependency line to be much shorter than the
@@ -400,7 +400,7 @@ T["render skips deps whose line was deleted"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = { somepkg = "1.0.0" }
 
   -- Truncate the buffer so the dependency row is past its end.
@@ -426,7 +426,7 @@ T["render does not move a stale badge onto the following line"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
 
   -- Deleting the first dependency shifts otherpkg and the closing bracket up,
   -- while the parsed rows still point at the old positions.
@@ -444,7 +444,7 @@ T["render does not move a stale badge onto a row that only mentions the name"] =
 
   for _, next_line in ipairs({ '  "requests-toolbelt>=1.0",', "  # requests is pinned for py38" }) do
     helpers.setup_buffer({ "[project]", "dependencies = [", '  "requests>=2.0",', next_line, "]" })
-    local deps = pyproject.parse(nil, nil, bufnr)
+    local deps = pyproject.parse(nil, bufnr)
     vim.api.nvim_buf_set_lines(bufnr, 2, 3, false, {})
     virtual_text.render(bufnr, deps, { requests = "2.0.0", ["requests-toolbelt"] = "1.0.0" }, {
       lockfile_missing = false,
@@ -467,7 +467,7 @@ T["a marker keeps its locked version badge while the environment loads"] = funct
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   -- stub_env reports an empty environment, so the marker cannot be evaluated yet.
   virtual_text.render(bufnr, deps, { plain = "1.0.0", marked = "2.0.0" }, { lockfile_missing = false })
 
@@ -522,7 +522,7 @@ T["a failed PyPI fetch renders once without re-requesting"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local original_render = virtual_text.render
   local renders = 0
   virtual_text.render = function(...)

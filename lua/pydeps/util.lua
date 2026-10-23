@@ -1,8 +1,3 @@
----@class PyDepsQuotedString
----@field value string
----@field start_col integer
----@field end_col integer
-
 ---@class PyDepsLRUCache
 ---@field max_size integer
 ---@field cache table<string, any>
@@ -120,14 +115,6 @@ function M.trim(s)
   return (s:gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
----@param s string
----@param char string
----@return integer
-function M.count_char(s, char)
-  local _, count = s:gsub(char, "")
-  return count
-end
-
 ---Normalize a distribution name as PEP 503 does, so `Foo_Bar`, `foo.bar`
 ---and `foo-bar` name the same package.
 ---@param name string
@@ -175,26 +162,6 @@ function M.parse_requirement_extras(spec)
   end
 
   return extras
-end
-
----@param line string
----@return PyDepsQuotedString[]
-function M.parse_quoted_strings(line)
-  local results = {}
-  local idx = 1
-  while true do
-    local s, e, _, value = line:find("(['\"])(.-)%1", idx)
-    if not s then
-      break
-    end
-    table.insert(results, {
-      value = value,
-      start_col = s,
-      end_col = e,
-    })
-    idx = e + 1
-  end
-  return results
 end
 
 ---@param line string
