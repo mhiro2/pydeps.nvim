@@ -1,6 +1,7 @@
 local MiniTest = require("mini.test")
+local helpers = require("tests.test_helpers")
 
-local T = MiniTest.new_set({
+local T = helpers.new_set({
   hooks = {
     pre_case = function()
       package.loaded["pydeps.providers.osv"] = nil
@@ -13,21 +14,20 @@ local T = MiniTest.new_set({
 })
 
 ---Install a curl-backed jobstart stub that maps a request URL to a response.
----@param routes { pattern: string, body: string|false }[]
----@return table state -- { urls = string[] }
----@return fun() restore
+---@param routes { pattern: string, body: string|false|fun(cmd: string[]): string }[]
+---@return { urls: string[], cmds: string[][] }
 local function stub_requests(routes)
-  local original_executable = vim.fn.executable
-  local original_jobstart = vim.fn.jobstart
-  local state = { urls = {} }
+  local state = { urls = {}, cmds = {} }
 
-  vim.fn.executable = function(cmd)
+  helpers.stub(vim.fn, "executable", function(cmd)
     return cmd == "curl" and 1 or 0
-  end
+  end)
 
-  vim.fn.jobstart = function(cmd, opts)
+  helpers.stub(vim.fn, "jobstart", function(cmd, opts)
     local url = cmd[#cmd]
     table.insert(state.urls, url)
+    table.insert(state.cmds, cmd)
+    local job_id = #state.cmds
 
     local body = nil
     local matched = false
@@ -41,20 +41,17 @@ local function stub_requests(routes)
 
     vim.schedule(function()
       if matched and body ~= false then
-        opts.on_stdout(nil, { body })
-        opts.on_exit(nil, 0, nil)
+        opts.on_stdout(job_id, { body })
+        opts.on_exit(job_id, 0, "exit")
       else
         -- Simulate a failed request (non-zero exit, no stdout).
-        opts.on_exit(nil, 1, nil)
+        opts.on_exit(job_id, 1, "exit")
       end
     end)
-    return 1
-  end
+    return job_id
+  end)
 
-  return state, function()
-    vim.fn.executable = original_executable
-    vim.fn.jobstart = original_jobstart
-  end
+  return state
 end
 
 ---@param packages PyDepsAuditPackage[]
@@ -81,7 +78,7 @@ T["audit hydrates vulnerability details from the vulns endpoint"] = function()
   osv._clear_cache()
 
   -- querybatch returns id stubs only; details come from /v1/vulns/{id}.
-  local state, restore = stub_requests({
+  local state = stub_requests({
     {
       pattern = "querybatch$",
       body = '{"results":[{"vulns":[{"id":"GHSA-0001","modified":"2024-01-01T00:00:00Z"}]},{"vulns":[]}]}',
@@ -97,8 +94,6 @@ T["audit hydrates vulnerability details from the vulns endpoint"] = function()
     { name = "requests", version = "2.31.0" },
     { name = "urllib3", version = "2.2.0" },
   })
-
-  restore()
 
   MiniTest.expect.equality(err, nil)
   MiniTest.expect.equality(#results, 2)
@@ -124,7 +119,7 @@ T["audit surfaces advisory id when hydration fails"] = function()
 
   -- querybatch succeeds but the vulns endpoint fails: the advisory must still
   -- surface (with UNKNOWN severity) rather than disappear.
-  local _, restore = stub_requests({
+  stub_requests({
     {
       pattern = "querybatch$",
       body = '{"results":[{"vulns":[{"id":"PYSEC-2024-1","modified":"2024-01-01T00:00:00Z"}]}]}',
@@ -135,8 +130,6 @@ T["audit surfaces advisory id when hydration fails"] = function()
   local results, err = run_audit({
     { name = "requests", version = "2.31.0" },
   })
-
-  restore()
 
   MiniTest.expect.equality(err, nil)
   MiniTest.expect.equality(#results, 1)
@@ -153,15 +146,13 @@ T["audit skips hydration when no vulnerabilities are reported"] = function()
   local osv = require("pydeps.providers.osv")
   osv._clear_cache()
 
-  local state, restore = stub_requests({
+  local state = stub_requests({
     { pattern = "querybatch$", body = '{"results":[{"vulns":[]}]}' },
   })
 
   local results, err = run_audit({
     { name = "requests", version = "2.31.0" },
   })
-
-  restore()
 
   MiniTest.expect.equality(err, nil)
   MiniTest.expect.equality(#results, 1)
@@ -174,7 +165,7 @@ T["audit reuses the hydrated result without re-requesting"] = function()
   local osv = require("pydeps.providers.osv")
   osv._clear_cache()
 
-  local state, restore = stub_requests({
+  local state = stub_requests({
     {
       pattern = "querybatch$",
       body = '{"results":[{"vulns":[{"id":"GHSA-0001","modified":"2024-01-01T00:00:00Z"}]}]}',
@@ -191,8 +182,6 @@ T["audit reuses the hydrated result without re-requesting"] = function()
 
   local results = run_audit({ { name = "requests", version = "2.31.0" } })
 
-  restore()
-
   -- Fully hydrated results are cached, so the second audit issues no requests.
   MiniTest.expect.equality(#state.urls, 2)
   MiniTest.expect.equality(results[1].vulnerabilities[1].severity, "HIGH")
@@ -202,14 +191,12 @@ T["audit reuses cache for same package/version"] = function()
   local osv = require("pydeps.providers.osv")
   osv._clear_cache()
 
-  local state, restore = stub_requests({
+  local state = stub_requests({
     { pattern = "querybatch$", body = '{"results":[{"vulns":[]}]}' },
   })
 
   run_audit({ { name = "requests", version = "2.31.0" } })
   run_audit({ { name = "requests", version = "2.31.0" } })
-
-  restore()
 
   -- Second audit is served from cache, so only one request is made.
   MiniTest.expect.equality(#state.urls, 1)
@@ -219,7 +206,7 @@ T["audit skips invalid package names"] = function()
   local osv = require("pydeps.providers.osv")
   osv._clear_cache()
 
-  local state, restore = stub_requests({
+  local state = stub_requests({
     { pattern = "querybatch$", body = '{"results":[{"vulns":[]}]}' },
   })
 
@@ -227,19 +214,16 @@ T["audit skips invalid package names"] = function()
     { name = "../invalid", version = "1.0.0" },
   })
 
-  restore()
-
   MiniTest.expect.equality(#state.urls, 0)
   MiniTest.expect.equality(#results, 0)
   MiniTest.expect.equality(err, nil)
 end
 
 T["failed audits retain their reason during backoff"] = function()
-  local state, restore = stub_requests({ { pattern = "querybatch$", body = false } })
+  local state = stub_requests({ { pattern = "querybatch$", body = false } })
   local packages = { { name = "demo", version = "1" } }
   local first, first_error = run_audit(packages)
   local second, second_error = run_audit(packages)
-  restore()
   MiniTest.expect.equality(#state.urls, 1)
   MiniTest.expect.equality(first[1].status, "failed")
   MiniTest.expect.equality(second[1].status, "failed")
@@ -260,9 +244,8 @@ T["malformed batch results never become clean results"] = function()
     '{"results":{}}',
   }) do
     require("pydeps.providers.osv")._clear_cache()
-    local _, restore = stub_requests({ { pattern = "querybatch$", body = body } })
+    stub_requests({ { pattern = "querybatch$", body = body } })
     local results, err = run_audit({ { name = "demo", version = "1" } })
-    restore()
     MiniTest.expect.equality(results[1].status, "failed")
     MiniTest.expect.equality(type(err), "string")
   end
@@ -270,7 +253,7 @@ end
 
 T["partial batch failures preserve successful scans and continue"] = function()
   local calls = 0
-  local _, restore = stub_requests({
+  stub_requests({
     {
       pattern = "querybatch$",
       body = function()
@@ -287,7 +270,6 @@ T["partial batch failures preserve successful scans and continue"] = function()
     packages[i] = { name = "demo" .. i, version = "1" }
   end
   local results, err = run_audit(packages)
-  restore()
   MiniTest.expect.equality(calls, 2)
   MiniTest.expect.equality(type(err), "string")
   MiniTest.expect.equality(results[1].status, "failed")
@@ -295,18 +277,15 @@ T["partial batch failures preserve successful scans and continue"] = function()
 end
 
 T["audit report excludes failed packages from scanned totals"] = function()
-  local output = require("pydeps.ui.output")
-  local original_show = output.show
   local lines
-  output.show = function(_, content)
+  helpers.stub(require("pydeps.ui.output"), "show", function(_, content)
     lines = content
-  end
+  end)
   local summary = require("pydeps.ui.security_audit").show({
     { name = "a", version = "1", status = "clean", vulnerabilities = {} },
     { name = "b", version = "1", status = "failed", error = "offline", vulnerabilities = {} },
     { name = "c", version = "1", status = "not_scanned", vulnerabilities = {} },
   })
-  output.show = original_show
   MiniTest.expect.equality(summary.scanned_packages, 1)
   MiniTest.expect.equality(summary.failed_packages, 1)
   MiniTest.expect.equality(summary.not_scanned_packages, 1)
@@ -320,12 +299,11 @@ T["CVSS vectors remain unknown and retain original evaluations"] = function()
     { type = "CVSS_V4", score = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N" },
   }) do
     require("pydeps.providers.osv")._clear_cache()
-    local _, restore = stub_requests({
+    stub_requests({
       { pattern = "querybatch$", body = '{"results":[{"vulns":[{"id":"TEST-1"}]}]}' },
       { pattern = "/vulns/", body = vim.json.encode({ id = "TEST-1", severity = { evaluation } }) },
     })
     local results = run_audit({ { name = "demo", version = "1" } })
-    restore()
     MiniTest.expect.equality(results[1].vulnerabilities[1].severity, "UNKNOWN")
     MiniTest.expect.equality(results[1].vulnerabilities[1].severity_scores, { evaluation })
   end
@@ -334,7 +312,7 @@ end
 T["severity aggregation keeps highest recognized evaluation regardless of order"] = function()
   for _, scores in ipairs({ { "8.0", "3.0" }, { "3.0", "8.0" } }) do
     require("pydeps.providers.osv")._clear_cache()
-    local _, restore = stub_requests({
+    stub_requests({
       { pattern = "querybatch$", body = '{"results":[{"vulns":[{"id":"TEST-1"}]}]}' },
       {
         pattern = "/vulns/",
@@ -351,7 +329,6 @@ T["severity aggregation keeps highest recognized evaluation regardless of order"
       },
     })
     local results = run_audit({ { name = "demo", version = "1" } })
-    restore()
     MiniTest.expect.equality(results[1].vulnerabilities[1].severity, "HIGH")
   end
 end
@@ -364,7 +341,7 @@ T["GitHub MODERATE advisories keep their level instead of degrading to unknown"]
     { "unrecognized", "UNKNOWN" },
   }) do
     require("pydeps.providers.osv")._clear_cache()
-    local _, restore = stub_requests({
+    stub_requests({
       { pattern = "querybatch$", body = '{"results":[{"vulns":[{"id":"TEST-1"}]}]}' },
       {
         pattern = "/vulns/",
@@ -376,14 +353,13 @@ T["GitHub MODERATE advisories keep their level instead of degrading to unknown"]
       },
     })
     local results = run_audit({ { name = "demo", version = "1" } })
-    restore()
     MiniTest.expect.equality(results[1].vulnerabilities[1].severity, case[2])
   end
 end
 
 T["moderate advisories sort above low ones"] = function()
   require("pydeps.providers.osv")._clear_cache()
-  local _, restore = stub_requests({
+  stub_requests({
     { pattern = "querybatch$", body = '{"results":[{"vulns":[{"id":"LOW-1"},{"id":"MOD-1"}]}]}' },
     {
       pattern = "/vulns/LOW%-1",
@@ -395,9 +371,154 @@ T["moderate advisories sort above low ones"] = function()
     },
   })
   local results = run_audit({ { name = "demo", version = "1" } })
-  restore()
   MiniTest.expect.equality(results[1].vulnerabilities[1].id, "MOD-1")
   MiniTest.expect.equality(results[1].vulnerabilities[2].id, "LOW-1")
+end
+
+---@param cmd string[]
+---@return table
+local function querybatch_payload(cmd)
+  local prefix = { "-X", "POST", "-H", "Content-Type: application/json", "--data-binary" }
+  for i = 1, #cmd - #prefix do
+    if vim.deep_equal(vim.list_slice(cmd, i, i + #prefix - 1), prefix) then
+      return vim.json.decode(cmd[i + #prefix])
+    end
+  end
+  error("querybatch command lacks a JSON POST body")
+end
+
+T["audit posts one PyPI query per package in batches of 100"] = function()
+  require("pydeps.providers.osv")._clear_cache()
+  local state = stub_requests({
+    {
+      pattern = "querybatch$",
+      body = function(cmd)
+        local rows = {}
+        for _ = 1, #querybatch_payload(cmd).queries do
+          table.insert(rows, { vulns = {} })
+        end
+        return vim.json.encode({ results = rows })
+      end,
+    },
+  })
+  local packages = {}
+  for i = 1, 101 do
+    -- Names are normalized before they are sent.
+    packages[i] = { name = string.format("Demo%03d", i), version = " 1." .. i .. " " }
+  end
+
+  local results, err = run_audit(packages)
+
+  MiniTest.expect.equality(err, nil)
+  MiniTest.expect.equality(#state.cmds, 2)
+  local first = querybatch_payload(state.cmds[1]).queries
+  local second = querybatch_payload(state.cmds[2]).queries
+  MiniTest.expect.equality(#first, 100)
+  MiniTest.expect.equality(first[1], { package = { ecosystem = "PyPI", name = "demo001" }, version = "1.1" })
+  MiniTest.expect.equality(first[100], { package = { ecosystem = "PyPI", name = "demo100" }, version = "1.100" })
+  MiniTest.expect.equality(second, { { package = { ecosystem = "PyPI", name = "demo101" }, version = "1.101" } })
+  MiniTest.expect.equality(state.urls[1], "https://api.osv.dev/v1/querybatch")
+  MiniTest.expect.equality(results[101].status, "clean")
+end
+
+T["audit request timeout fails once and ignores the late exit"] = function()
+  require("pydeps.providers.osv")._clear_cache()
+  require("pydeps.core.jobs")._reset()
+  local job_opts
+  helpers.stub(vim.fn, "executable", function(cmd)
+    return cmd == "curl" and 1 or 0
+  end)
+  helpers.stub(vim.fn, "jobstart", function(_, opts)
+    job_opts = opts
+    return 31
+  end)
+  local stopped = {}
+  helpers.stub(vim.fn, "jobstop", function(id)
+    table.insert(stopped, id)
+    return 1
+  end)
+  -- Drive the request timeout by hand instead of waiting for it.
+  local timers = {}
+  helpers.stub(vim.uv, "new_timer", function()
+    local timer = { closing = false }
+    function timer:start(ms, _, cb)
+      self.ms, self.cb = ms, cb
+    end
+    function timer:stop() end
+    function timer:close()
+      self.closing = true
+    end
+    function timer:is_closing()
+      return self.closing
+    end
+    table.insert(timers, timer)
+    return timer
+  end)
+
+  local calls = {}
+  require("pydeps.providers.osv").audit({ { name = "demo", version = "1" } }, function(results, err)
+    table.insert(calls, { results = results, err = err })
+  end)
+  MiniTest.expect.equality(#timers, 1)
+  MiniTest.expect.equality(timers[1].ms, 15000)
+
+  timers[1].cb()
+  helpers.wait_for(function()
+    return #calls == 1
+  end, "audit callback")
+  MiniTest.expect.equality(stopped, { 31 })
+  MiniTest.expect.equality(calls[1].err, "OSV request timed out")
+  MiniTest.expect.equality(calls[1].results[1].status, "failed")
+
+  -- The stopped job still exits afterwards; that must not report again.
+  job_opts.on_stdout(31, { '{"results":[{"vulns":[]}]}' })
+  job_opts.on_exit(31, 0, "exit")
+  helpers.drain(30)
+  MiniTest.expect.equality(#calls, 1)
+end
+
+T["audit falls back to python when curl is missing"] = function()
+  require("pydeps.providers.osv")._clear_cache()
+  local cmds = {}
+  helpers.stub(vim.fn, "executable", function(cmd)
+    return cmd == "python3" and 1 or 0
+  end)
+  helpers.stub(vim.fn, "jobstart", function(cmd, opts)
+    table.insert(cmds, cmd)
+    vim.schedule(function()
+      opts.on_stdout(1, { '{"results":[{"vulns":[]}]}' })
+      opts.on_exit(1, 0, "exit")
+    end)
+    return 1
+  end)
+
+  local results, err = run_audit({ { name = "demo", version = "1" } })
+
+  MiniTest.expect.equality(err, nil)
+  MiniTest.expect.equality(results[1].status, "clean")
+  MiniTest.expect.equality(#cmds, 1)
+  MiniTest.expect.equality({ cmds[1][1], cmds[1][2] }, { "python3", "-c" })
+  MiniTest.expect.equality(vim.list_slice(cmds[1], 4, 5), { "https://api.osv.dev/v1/querybatch", "POST" })
+  MiniTest.expect.equality(
+    vim.json.decode(cmds[1][6]).queries,
+    { { package = { ecosystem = "PyPI", name = "demo" }, version = "1" } }
+  )
+end
+
+T["audit reports packages as failed when the request cannot start"] = function()
+  require("pydeps.providers.osv")._clear_cache()
+  helpers.stub(vim.fn, "executable", function(cmd)
+    return cmd == "curl" and 1 or 0
+  end)
+  helpers.stub(vim.fn, "jobstart", function()
+    return 0
+  end)
+
+  local results, err = run_audit({ { name = "demo", version = "1" } })
+
+  MiniTest.expect.equality(err, "failed to start OSV request")
+  MiniTest.expect.equality(results[1].status, "failed")
+  MiniTest.expect.equality(results[1].error, "failed to start OSV request")
 end
 
 return T

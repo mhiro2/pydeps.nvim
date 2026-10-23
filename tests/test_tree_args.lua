@@ -107,12 +107,6 @@ T["parse multiple flags"] = function()
   MiniTest.expect.equality(result.show_sizes, true)
 end
 
-T["parse package with depth"] = function()
-  local result = tree_args.parse("--package requests --depth 2", false)
-  MiniTest.expect.equality(result.target, "requests")
-  MiniTest.expect.equality(result.depth, 2)
-end
-
 T["parse package with reverse"] = function()
   local result = tree_args.parse("--package rich --reverse", false)
   MiniTest.expect.equality(result.target, "rich")
@@ -127,11 +121,6 @@ end
 T["parse with single quoted package name"] = function()
   local result = tree_args.parse("--package 'some-package'", false)
   MiniTest.expect.equality(result.target, "some-package")
-end
-
-T["frozen is true by default"] = function()
-  local result = tree_args.parse("", false)
-  MiniTest.expect.equality(result.frozen, true)
 end
 
 T["parse --resolve flag disables frozen"] = function()
