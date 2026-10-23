@@ -4,126 +4,68 @@ local badges = require("pydeps.core.tree_badges")
 
 local T = helpers.create_test_set()
 
-T["build badges for direct dependency"] = function()
-  local info = {
-    direct = true,
-    group = nil,
-    extras = {},
-  }
-
-  local badge_list = badges.build_badges(info)
-
-  MiniTest.expect.equality(badge_list[1].text, "[direct]")
+---@param badge_list PyDepsTreeBadge[]
+---@return string[][]
+local function pairs_of(badge_list)
+  local result = {}
+  for _, badge in ipairs(badge_list) do
+    table.insert(result, { badge.text, badge.highlight })
+  end
+  return result
 end
 
-T["build badges for transitive dependency"] = function()
-  local info = {
-    direct = false,
-    group = nil,
-    extras = {},
-  }
-
-  local badge_list = badges.build_badges(info)
-
-  MiniTest.expect.equality(badge_list[1].text, "[transitive]")
+T["build badges for direct and transitive dependencies"] = function()
+  MiniTest.expect.equality(
+    pairs_of(badges.build_badges({ direct = true, group = nil, extras = {} })),
+    { { "[direct]", "PyDepsBadgeDirect" } }
+  )
+  MiniTest.expect.equality(
+    pairs_of(badges.build_badges({ direct = false, group = nil, extras = {} })),
+    { { "[transitive]", "PyDepsBadgeTransitive" } }
+  )
 end
 
 T["build badges with group"] = function()
-  local info = {
-    direct = true,
-    group = "dev",
-    extras = {},
+  local cases = {
+    { group = "dev", text = "[dev]" },
+    { group = "optional:test", text = "[test]" },
+    { group = "group:lint", text = "[lint]" },
   }
-
-  local badge_list = badges.build_badges(info)
-
-  local has_group = false
-  for _, badge in ipairs(badge_list) do
-    if badge.text == "[dev]" then
-      has_group = true
-      break
-    end
+  for _, case in ipairs(cases) do
+    MiniTest.expect.equality(
+      pairs_of(badges.build_badges({ direct = true, group = case.group, extras = {} })),
+      { { "[direct]", "PyDepsBadgeDirect" }, { case.text, "PyDepsBadgeGroup" } }
+    )
   end
-  MiniTest.expect.equality(has_group, true)
+  -- The main project group carries no badge of its own.
+  MiniTest.expect.equality(
+    pairs_of(badges.build_badges({ direct = true, group = "project", extras = {} })),
+    { { "[direct]", "PyDepsBadgeDirect" } }
+  )
 end
 
-T["build badges with optional group"] = function()
-  local info = {
-    direct = true,
-    group = "optional:test",
-    extras = {},
+T["build badges with all fields from declared requirements"] = function()
+  local deps_list = {
+    { name = "requests", spec = "requests[socks]>=2", line = 1, col_start = 1, col_end = 1, group = "optional:net" },
+    {
+      name = "requests",
+      spec = "requests[security, socks]",
+      line = 2,
+      col_start = 1,
+      col_end = 1,
+      group = "group:dev",
+    },
   }
 
-  local badge_list = badges.build_badges(info)
+  local info = badges.get_package_info("requests", { requests = true }, deps_list)
 
-  local has_group = false
-  for _, badge in ipairs(badge_list) do
-    if badge.text == "[test]" then
-      has_group = true
-      break
-    end
-  end
-  MiniTest.expect.equality(has_group, true)
-end
-
-T["build badges with extras"] = function()
-  local info = {
-    direct = true,
-    group = nil,
-    extras = { "security", "testing" },
-  }
-
-  local badge_list = badges.build_badges(info)
-
-  local has_security = false
-  local has_testing = false
-  for _, badge in ipairs(badge_list) do
-    if badge.text == "[extra:security]" then
-      has_security = true
-    end
-    if badge.text == "[extra:testing]" then
-      has_testing = true
-    end
-  end
-  MiniTest.expect.equality(has_security, true)
-  MiniTest.expect.equality(has_testing, true)
-end
-
-T["build badges with all fields"] = function()
-  local info = {
-    direct = true,
-    group = "dev",
-    extras = { "test" },
-  }
-
-  local badge_list = badges.build_badges(info)
-
-  -- Should have: direct, group, extra
-  MiniTest.expect.equality(#badge_list >= 3, true)
-end
-
-T["build badges highlights"] = function()
-  local info = {
-    direct = true,
-    group = nil,
-    extras = {},
-  }
-
-  local badge_list = badges.build_badges(info)
-
-  MiniTest.expect.equality(badge_list[1].highlight, "PyDepsBadgeDirect")
-end
-
-T["build badges transitive highlight"] = function()
-  local info = {
-    direct = false,
-    group = nil,
-    extras = {},
-  }
-
-  local badge_list = badges.build_badges(info)
-
-  MiniTest.expect.equality(badge_list[1].highlight, "PyDepsBadgeTransitive")
+  MiniTest.expect.equality(info, { direct = true, group = "optional:net", extras = { "socks", "security" } })
+  MiniTest.expect.equality(pairs_of(badges.build_badges(info)), {
+    { "[direct]", "PyDepsBadgeDirect" },
+    { "[net]", "PyDepsBadgeGroup" },
+    { "[extra:socks]", "PyDepsBadgeExtra" },
+    { "[extra:security]", "PyDepsBadgeExtra" },
+  })
 end
 
 T["get_package_info marks direct packages correctly"] = function()
@@ -135,13 +77,18 @@ T["get_package_info marks direct packages correctly"] = function()
     { name = "requests", spec = "requests>=2.0", line = 1, col_start = 1, col_end = 1, group = "project" },
   }
 
-  -- Direct package
-  local info1 = badges.get_package_info("requests", direct_deps, deps_list)
-  MiniTest.expect.equality(info1.direct, true)
-
-  -- Transitive package
-  local info2 = badges.get_package_info("rich", direct_deps, deps_list)
-  MiniTest.expect.equality(info2.direct, false)
+  MiniTest.expect.equality(
+    badges.get_package_info("requests", direct_deps, deps_list),
+    { direct = true, group = "project", extras = {} }
+  )
+  MiniTest.expect.equality(
+    badges.get_package_info("rich", direct_deps, deps_list),
+    { direct = false, group = nil, extras = {} }
+  )
+  MiniTest.expect.equality(
+    badges.get_package_info("urllib3", direct_deps, deps_list),
+    { direct = false, group = nil, extras = {} }
+  )
 end
 
 T["get_package_info retrieves group from deps_list"] = function()

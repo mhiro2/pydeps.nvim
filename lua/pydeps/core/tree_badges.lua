@@ -1,3 +1,5 @@
+local util = require("pydeps.util")
+
 local M = {}
 
 ---@class PyDepsTreeBadge
@@ -20,10 +22,18 @@ function M.get_package_info(package, direct_deps, deps_list)
   local extras = {}
 
   if direct then
+    -- A package may be declared in several sections; report the first group
+    -- and every extra requested across its declarations.
+    local seen = {}
     for _, dep in ipairs(deps_list) do
       if dep.name == package then
-        group = dep.group
-        break
+        group = group or dep.group
+        for _, extra in ipairs(util.parse_requirement_extras(dep.spec)) do
+          if not seen[extra] then
+            seen[extra] = true
+            table.insert(extras, extra)
+          end
+        end
       end
     end
   end
