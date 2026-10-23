@@ -22,8 +22,11 @@ T["PEP 440 normalized release ordering"] = function()
     for j, spec in ipairs(ordered) do
       MiniTest.expect.equality(version.matches(value, ">=", spec), i >= j)
       MiniTest.expect.equality(version.matches(value, "<=", spec), i <= j)
+      MiniTest.expect.equality(version.compare(value, spec), i < j and -1 or (i > j and 1 or 0))
     end
   end
+  MiniTest.expect.equality(version.compare("1.0+local.2", "1.0+local.10"), -1)
+  MiniTest.expect.equality(version.compare("1.0", "not a version"), nil)
   for _, pair in ipairs({
     { "v01.002.0", "1.2" },
     { "1.0-alpha", "1.0a0" },
