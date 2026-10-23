@@ -222,26 +222,6 @@ function M.strip_toml_comment(line)
   return line
 end
 
----@param line string
----@return integer?
-function M.find_comment_pos(line)
-  local in_single = false
-  local in_double = false
-  for i = 1, #line do
-    local ch = line:sub(i, i)
-    if ch == "'" and not in_double then
-      in_single = not in_single
-    elseif ch == '"' and not in_single then
-      if not is_escaped(line, i) then
-        in_double = not in_double
-      end
-    elseif ch == "#" and not in_single and not in_double then
-      return i
-    end
-  end
-  return nil
-end
-
 ---@param path? string
 ---@return boolean
 function M.is_pyproject(path)

@@ -322,11 +322,15 @@ local function set_mark(bufnr, dep, chunks, col)
   if not lnum or lnum < 0 or lnum >= vim.api.nvim_buf_line_count(bufnr) then
     return
   end
-  -- Clamp col to current line byte length: deps may have been parsed against
-  -- a previous buffer state that has since been edited.
+  -- Deps may have been parsed against a previous buffer state (e.g. a
+  -- debounced re-render after a PyPI fetch), so skip rows whose parsed
+  -- string no longer sits at the recorded columns.
   local line_text = vim.api.nvim_buf_get_lines(bufnr, lnum, lnum + 1, false)[1] or ""
-  local safe_col = math.max(0, math.min(dep.col or 0, #line_text))
-  vim.api.nvim_buf_set_extmark(bufnr, M.ns, lnum, safe_col, {
+  local token = dep.col_end and line_text:sub((dep.col or 0) + 1, dep.col_end) or ""
+  if token:match("^[\"'](.*)[\"']$") ~= dep.spec then
+    return
+  end
+  vim.api.nvim_buf_set_extmark(bufnr, M.ns, lnum, dep.col, {
     virt_text = chunks,
     virt_text_pos = "overlay",
     virt_text_win_col = col,
