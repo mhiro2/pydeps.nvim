@@ -3,21 +3,35 @@ local helpers = require("tests.test_helpers")
 
 local T = helpers.create_test_set()
 
-T["find_paths returns shortest paths per root"] = function()
+T["find_path returns the shortest complete path"] = function()
   local provenance = require("pydeps.core.provenance")
   local graph = {
-    requests = { "urllib3", "idna" },
-    urllib3 = { "certifi" },
-    idna = {},
+    app = { "web", "cli" },
+    web = { "http" },
+    http = { "tls" },
+    tls = { "certifi" },
+    cli = { "certifi" },
     certifi = {},
-    rich = { "markdown-it-py" },
-    ["markdown-it-py"] = {},
   }
 
-  local paths = provenance.find_paths(graph, { "requests", "rich" }, "certifi", 3)
-  MiniTest.expect.equality(#paths, 1)
-  MiniTest.expect.equality(paths[1][1], "requests")
-  MiniTest.expect.equality(paths[1][#paths[1]], "certifi")
+  MiniTest.expect.equality(provenance.find_path(graph, "app", "certifi"), { "app", "cli", "certifi" })
+  MiniTest.expect.equality(provenance.find_path(graph, "web", "certifi"), { "web", "http", "tls", "certifi" })
+end
+
+T["find_path handles self, cycles and unreachable targets"] = function()
+  local provenance = require("pydeps.core.provenance")
+  local graph = {
+    a = { "b" },
+    b = { "a", "c" },
+    c = {},
+    island = {},
+  }
+
+  MiniTest.expect.equality(provenance.find_path(graph, "a", "a"), { "a" })
+  MiniTest.expect.equality(provenance.find_path(graph, "a", "c"), { "a", "b", "c" })
+  MiniTest.expect.equality(provenance.find_path(graph, "a", "island"), nil)
+  MiniTest.expect.equality(provenance.find_path(graph, "c", "a"), nil)
+  MiniTest.expect.equality(provenance.find_path(nil, "a", "b"), nil)
 end
 
 T["roots_reaching_target marks only reachable roots"] = function()

@@ -242,31 +242,6 @@ function M.find_comment_pos(line)
   return nil
 end
 
----@param line string
----@return integer
-function M.count_brackets_outside_strings(line)
-  local in_single = false
-  local in_double = false
-  local delta = 0
-  for i = 1, #line do
-    local ch = line:sub(i, i)
-    if ch == "'" and not in_double then
-      in_single = not in_single
-    elseif ch == '"' and not in_single then
-      if not is_escaped(line, i) then
-        in_double = not in_double
-      end
-    elseif not in_single and not in_double then
-      if ch == "[" then
-        delta = delta + 1
-      elseif ch == "]" then
-        delta = delta - 1
-      end
-    end
-  end
-  return delta
-end
-
 ---@param path? string
 ---@return boolean
 function M.is_pyproject(path)
