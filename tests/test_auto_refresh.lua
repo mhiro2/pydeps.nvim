@@ -1,17 +1,17 @@
 local MiniTest = require("mini.test")
 local helpers = require("tests.test_helpers")
 
-local T = MiniTest.new_set({
+local T = helpers.new_set({
   hooks = {
     pre_case = function()
       helpers.close_extra_windows()
       vim.cmd("enew!")
-      package.loaded["pydeps.core.env"] = {
+      helpers.stub_module("pydeps.core.env", {
         get = function()
           return {}
         end,
-      }
-      package.loaded["pydeps.providers.pypi"] = {
+      })
+      helpers.stub_module("pydeps.providers.pypi", {
         get_cached = function()
           return nil
         end,
@@ -26,9 +26,9 @@ local T = MiniTest.new_set({
         sorted_versions = function()
           return {}
         end,
-      }
-      package.loaded["pydeps.ui.virtual_text"] = nil
-      package.loaded["pydeps.ui.diagnostics"] = nil
+      })
+      helpers.stub_module("pydeps.ui.virtual_text", nil)
+      helpers.stub_module("pydeps.ui.diagnostics", nil)
       require("pydeps").setup({
         auto_refresh = true,
         refresh_debounce_ms = 10,

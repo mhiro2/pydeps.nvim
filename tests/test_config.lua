@@ -84,13 +84,14 @@ end
 
 T["setup accepts osv options"] = function()
   local config = require("pydeps.config")
-  MiniTest.expect.no_error(function()
-    config.setup({
-      audit_window_border = "single",
-      osv_url = "https://api.osv.dev/v1/querybatch",
-      osv_cache_ttl = 7200,
-    })
-  end)
+  config.setup({
+    audit_window_border = "single",
+    osv_url = "https://osv.example.test/v1/querybatch",
+    osv_cache_ttl = 7200,
+  })
+  MiniTest.expect.equality(config.options.audit_window_border, "single")
+  MiniTest.expect.equality(config.options.osv_url, "https://osv.example.test/v1/querybatch")
+  MiniTest.expect.equality(config.options.osv_cache_ttl, 7200)
 end
 
 T["setup rejects negative debounce"] = function()

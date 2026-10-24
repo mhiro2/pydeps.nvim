@@ -4,160 +4,90 @@ local tree_ui = require("pydeps.ui.tree")
 
 local T = helpers.create_test_set()
 
-T["extract packages from simple tree"] = function()
-  local lines = {
-    "requests 2.31.0",
-    "├── charset-normalizer 3.3.2",
-    "├── idna 3.6",
-    "└── urllib3 2.0.7",
-  }
+-- Each row is one uv tree rendering; the expected table maps line numbers to package names.
+local extract_cases = {
+  {
+    name = "simple tree",
+    lines = {
+      "requests 2.31.0",
+      "├── charset-normalizer 3.3.2",
+      "├── idna 3.6",
+      "└── urllib3 2.0.7",
+    },
+    expected = { "requests", "charset-normalizer", "idna", "urllib3" },
+  },
+  {
+    name = "complex tree skips (*) markers",
+    lines = {
+      "requests 2.31.0",
+      "│   ├── certifi 2023.7.22",
+      "│   └── urllib3 2.0.7",
+      "└── (*)",
+    },
+    expected = { "requests", "certifi", "urllib3" },
+  },
+  {
+    name = "lines without packages",
+    lines = {
+      "requests 2.31.0",
+      "    ",
+      "├── Some text without package",
+      "└── urllib3 2.0.7",
+    },
+    expected = { [1] = "requests", [4] = "urllib3" },
+  },
+  {
+    name = "name separators",
+    lines = {
+      "some_package_name 1.0.0",
+      "some-package-name 1.0.0",
+      "some.package.name 1.0.0",
+    },
+    -- uv may print any spelling; all of them name the same package.
+    expected = { "some-package-name", "some-package-name", "some-package-name" },
+  },
+  {
+    name = "pure asterisk lines",
+    lines = {
+      "requests 2.31.0",
+      "(*)",
+    },
+    expected = { "requests" },
+  },
+  {
+    name = "deeply nested tree",
+    lines = {
+      "requests 2.31.0",
+      "│   ├── certifi 2023.7.22",
+      "│   │   └── urllib3 2.0.7",
+      "│   └── idna 3.6",
+    },
+    expected = { "requests", "certifi", "urllib3", "idna" },
+  },
+  {
+    name = "v prefix versions",
+    lines = {
+      "pydantic v2.12.5",
+      "├── annotated-types v0.7.0",
+      "├── pydantic-core v2.41.5",
+      "│   └── typing-extensions v4.15.0",
+    },
+    expected = { "pydantic", "annotated-types", "pydantic-core", "typing-extensions" },
+  },
+  {
+    name = "mixed version formats",
+    lines = {
+      "package-old 1.0.0",
+      "package-new v2.0.0",
+    },
+    expected = { "package-old", "package-new" },
+  },
+}
 
-  local packages = tree_ui.extract_packages(lines)
-
-  MiniTest.expect.equality(packages[1], "requests")
-  MiniTest.expect.equality(packages[2], "charset-normalizer")
-  MiniTest.expect.equality(packages[3], "idna")
-  MiniTest.expect.equality(packages[4], "urllib3")
-end
-
-T["extract packages from complex tree"] = function()
-  local lines = {
-    "requests 2.31.0",
-    "│   ├── certifi 2023.7.22",
-    "│   └── urllib3 2.0.7",
-    "└── (*)",
-  }
-
-  local packages = tree_ui.extract_packages(lines)
-
-  MiniTest.expect.equality(packages[1], "requests")
-  MiniTest.expect.equality(packages[2], "certifi")
-  MiniTest.expect.equality(packages[3], "urllib3")
-  -- Line 4 has (*) which should be skipped
-  MiniTest.expect.equality(packages[4], nil)
-end
-
-T["handle lines without packages"] = function()
-  local lines = {
-    "requests 2.31.0",
-    "    ",
-    "├── Some text without package",
-    "└── urllib3 2.0.7",
-  }
-
-  local packages = tree_ui.extract_packages(lines)
-
-  MiniTest.expect.equality(packages[1], "requests")
-  MiniTest.expect.equality(packages[2], nil) -- empty line
-  MiniTest.expect.equality(packages[3], nil) -- no package
-  MiniTest.expect.equality(packages[4], "urllib3")
-end
-
-T["extract package with underscores"] = function()
-  local lines = {
-    "some_package_name 1.0.0",
-  }
-
-  local packages = tree_ui.extract_packages(lines)
-
-  MiniTest.expect.equality(packages[1], "some_package_name")
-end
-
-T["extract package with hyphens"] = function()
-  local lines = {
-    "some-package-name 1.0.0",
-  }
-
-  local packages = tree_ui.extract_packages(lines)
-
-  MiniTest.expect.equality(packages[1], "some-package-name")
-end
-
-T["extract package with dots"] = function()
-  local lines = {
-    "some.package.name 1.0.0",
-  }
-
-  local packages = tree_ui.extract_packages(lines)
-
-  MiniTest.expect.equality(packages[1], "some.package.name")
-end
-
-T["skip pure asterisk lines"] = function()
-  local lines = {
-    "requests 2.31.0",
-    "(*)",
-  }
-
-  local packages = tree_ui.extract_packages(lines)
-
-  MiniTest.expect.equality(packages[1], "requests")
-  MiniTest.expect.equality(packages[2], nil)
-end
-
-T["handle deeply nested tree"] = function()
-  local lines = {
-    "requests 2.31.0",
-    "│   ├── certifi 2023.7.22",
-    "│   │   └── urllib3 2.0.7",
-    "│   └── idna 3.6",
-  }
-
-  local packages = tree_ui.extract_packages(lines)
-
-  MiniTest.expect.equality(packages[1], "requests")
-  MiniTest.expect.equality(packages[2], "certifi")
-  MiniTest.expect.equality(packages[3], "urllib3")
-  MiniTest.expect.equality(packages[4], "idna")
-end
-
--- Tests for version strings with "v" prefix (uv output format)
-T["extract package with v prefix version"] = function()
-  local lines = {
-    "pydantic v2.12.5",
-  }
-
-  local packages = tree_ui.extract_packages(lines)
-
-  MiniTest.expect.equality(packages[1], "pydantic")
-end
-
-T["extract packages from tree with v prefix versions"] = function()
-  local lines = {
-    "pydantic v2.12.5",
-    "├── annotated-types v0.7.0",
-    "├── pydantic-core v2.41.5",
-    "│   └── typing-extensions v4.15.0",
-  }
-
-  local packages = tree_ui.extract_packages(lines)
-
-  MiniTest.expect.equality(packages[1], "pydantic")
-  MiniTest.expect.equality(packages[2], "annotated-types")
-  MiniTest.expect.equality(packages[3], "pydantic-core")
-  MiniTest.expect.equality(packages[4], "typing-extensions")
-end
-
-T["extract packages with mixed version formats"] = function()
-  local lines = {
-    "package-old 1.0.0",
-    "package-new v2.0.0",
-  }
-
-  local packages = tree_ui.extract_packages(lines)
-
-  MiniTest.expect.equality(packages[1], "package-old")
-  MiniTest.expect.equality(packages[2], "package-new")
-end
-
-T["extract package with complex v prefix version"] = function()
-  local lines = {
-    "pydantic-core v2.41.5",
-  }
-
-  local packages = tree_ui.extract_packages(lines)
-
-  MiniTest.expect.equality(packages[1], "pydantic-core")
+for _, case in ipairs(extract_cases) do
+  T["extract packages: " .. case.name] = function()
+    MiniTest.expect.equality(tree_ui.extract_packages(case.lines), case.expected)
+  end
 end
 
 -- Tests for estimate_width function
@@ -177,19 +107,25 @@ end
 T["estimate_width with deps includes badge width"] = function()
   local lines = {
     "requests v2.31.0",
+    "└── urllib3 v2.0.7",
   }
 
   local direct_deps = { requests = true }
-  local deps_list =
-    { { name = "requests", spec = "requests>=2.31.0", line = 1, col_start = 1, col_end = 1, group = "project" } }
+  local deps_list = {
+    {
+      name = "requests",
+      spec = "requests[socks]>=2.31.0",
+      line = 1,
+      col_start = 1,
+      col_end = 1,
+      group = "optional:net",
+    },
+  }
 
   local width = tree_ui.estimate_width(lines, direct_deps, deps_list)
 
-  -- Width should be at least line width + badge width + space + padding
-  local line_width = vim.fn.strdisplaywidth("requests v2.31.0")
-  -- [direct] badge is 8 characters, plus 1 space before it
-  local expected_min_width = line_width + 1 + 8 + 2
-  MiniTest.expect.equality(width >= expected_min_width, true)
+  -- "requests v2.31.0" (16) + space + "[direct] [net] [extra:socks]" (28) + float padding (2)
+  MiniTest.expect.equality(width, 16 + 1 + 28 + 2)
 end
 
 T["estimate_width with empty lines"] = function()
@@ -205,22 +141,151 @@ T["estimate_width with empty lines"] = function()
   MiniTest.expect.equality(width, line_width + 2)
 end
 
-T["tree badges mark direct and transitive deps"] = function()
-  local direct_deps = { requests = true }
-  local deps_list =
-    { { name = "requests", spec = "requests>=2.31.0", line = 1, col_start = 1, col_end = 1, group = "project" } }
+---@param buf integer
+---@return table<integer, string[][]> virt_text chunks by 0-indexed row
+local function badge_marks(buf)
+  local ns = vim.api.nvim_create_namespace("pydeps-tree")
+  local result = {}
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })) do
+    MiniTest.expect.equality(mark[4].virt_text_pos, "eol")
+    result[mark[2]] = mark[4].virt_text
+  end
+  return result
+end
 
-  local badges = require("pydeps.core.tree_badges")
-  local info_direct = badges.get_package_info("requests", direct_deps, deps_list)
-  local info_transitive = badges.get_package_info("urllib3", direct_deps, deps_list)
+local tree_lines = {
+  "requests v2.31.0",
+  "├── charset-normalizer v3.3.2",
+  "└── (*)",
+}
 
-  local direct_badge = badges.build_badges(info_direct)[1]
-  local transitive_badge = badges.build_badges(info_transitive)[1]
+T["add_badges places badges at the end of package lines"] = function()
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, tree_lines)
+  local deps_list = {
+    { name = "requests", spec = "requests[socks]>=2", line = 1, col_start = 1, col_end = 1, group = "project" },
+  }
 
-  MiniTest.expect.equality(info_direct.direct, true)
-  MiniTest.expect.equality(info_transitive.direct, false)
-  MiniTest.expect.equality(direct_badge.text, "[direct]")
-  MiniTest.expect.equality(transitive_badge.text, "[transitive]")
+  tree_ui.add_badges(buf, tree_lines, { requests = true }, deps_list)
+
+  MiniTest.expect.equality(badge_marks(buf), {
+    [0] = { { "[direct]", "PyDepsBadgeDirect" }, { "[extra:socks]", "PyDepsBadgeExtra" } },
+    [1] = { { "[transitive]", "PyDepsBadgeTransitive" } },
+  })
+end
+
+T["setup_keymaps badges from the project and acts on the package under the cursor"] = function()
+  local dir = vim.fn.tempname()
+  vim.fn.mkdir(dir, "p")
+  vim.fn.writefile({ "[project]", 'dependencies = ["requests>=2"]' }, dir .. "/pyproject.toml")
+  helpers.create_uv_lock(dir)
+  helpers.defer(function()
+    vim.fn.delete(dir, "rf")
+  end)
+  helpers.stub_module("pydeps.core.env", {
+    get = function()
+      return {}
+    end,
+  })
+  require("pydeps.core.cache").get_lockfile(dir, { sync = true })
+
+  local why, shown = {}, {}
+  helpers.stub_module("pydeps.commands", {
+    provenance = function(name)
+      table.insert(why, name)
+    end,
+  })
+  helpers.stub_module("pydeps.ui.info", {
+    show = function(dep, version, opts)
+      table.insert(shown, { dep = dep, version = version, opts = opts })
+    end,
+  })
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, tree_lines)
+  vim.api.nvim_set_current_buf(buf)
+  tree_ui.setup_keymaps(buf, tree_lines, { root = dir })
+
+  MiniTest.expect.equality(badge_marks(buf), {
+    [0] = { { "[direct]", "PyDepsBadgeDirect" } },
+    [1] = { { "[transitive]", "PyDepsBadgeTransitive" } },
+  })
+
+  local maps = {}
+  for _, map in ipairs(vim.api.nvim_buf_get_keymap(buf, "n")) do
+    maps[map.lhs] = map.callback
+  end
+
+  vim.api.nvim_win_set_cursor(0, { 2, 0 })
+  maps["<CR>"]()
+  MiniTest.expect.equality(why, { "charset-normalizer" })
+
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  maps["i"]()
+  MiniTest.expect.equality(shown, {
+    { dep = { name = "requests", spec = "===2.31.0" }, version = "2.31.0", opts = { lockfile_missing = false } },
+  })
+end
+
+T["setup_keymaps matches declared names to uv's spelling"] = function()
+  local dir = vim.fn.tempname()
+  vim.fn.mkdir(dir, "p")
+  vim.fn.writefile({
+    "[project]",
+    'dependencies = ["Requests>=2", "Charset_Normalizer[unicode_backport]>=3"]',
+  }, dir .. "/pyproject.toml")
+  helpers.create_uv_lock(dir)
+  helpers.defer(function()
+    vim.fn.delete(dir, "rf")
+  end)
+  helpers.stub_module("pydeps.core.env", {
+    get = function()
+      return {}
+    end,
+  })
+  require("pydeps.core.cache").get_lockfile(dir, { sync = true })
+  local shown = {}
+  helpers.stub_module("pydeps.ui.info", {
+    show = function(dep, version)
+      table.insert(shown, { dep.name, version })
+    end,
+  })
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, tree_lines)
+  vim.api.nvim_set_current_buf(buf)
+  tree_ui.setup_keymaps(buf, tree_lines, { root = dir })
+
+  MiniTest.expect.equality(badge_marks(buf), {
+    [0] = { { "[direct]", "PyDepsBadgeDirect" } },
+    [1] = { { "[direct]", "PyDepsBadgeDirect" }, { "[extra:unicode_backport]", "PyDepsBadgeExtra" } },
+  })
+
+  local info_map
+  for _, map in ipairs(vim.api.nvim_buf_get_keymap(buf, "n")) do
+    if map.lhs == "i" then
+      info_map = map.callback
+    end
+  end
+  vim.api.nvim_win_set_cursor(0, { 2, 0 })
+  info_map()
+  MiniTest.expect.equality(shown, { { "charset-normalizer", "3.3.2" } })
+end
+
+T["setup_keymaps cleans up when the tree buffer is wiped"] = function()
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, tree_lines)
+  tree_ui.setup_keymaps(buf, tree_lines)
+  tree_ui.add_badges(buf, tree_lines, {}, {})
+  MiniTest.expect.no_equality(badge_marks(buf), {})
+
+  local cleaned = {}
+  helpers.stub(tree_ui, "cleanup", function(target)
+    table.insert(cleaned, target)
+  end)
+  vim.api.nvim_buf_delete(buf, { force = true })
+
+  MiniTest.expect.equality(cleaned, { buf })
 end
 
 return T

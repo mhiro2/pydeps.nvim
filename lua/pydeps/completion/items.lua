@@ -1,14 +1,14 @@
 ---@class PyDepsCompletionItemMeta
 ---@field detail? string
 ---@field label_details? table
----@field documentation? string|table
----@field insert_text? string
----@field new_text? string
----@field sort_text? string
+---@field new_text? string Text to insert instead of the label
+---@field filter_text? string Text the client matches against what was typed
 
 ---@class PyDepsCompletionPackageSource
 ---@field is_local? boolean
 ---@field pypi? boolean
+
+local util = require("pydeps.util")
 
 local M = {}
 
@@ -67,6 +67,22 @@ function M.package_source_meta(sources)
   return meta
 end
 
+---Package names are offered in their PEP 503 spelling, so `zope.i` yields
+---`zope-interface`. Give such items a filter text spelled the way the user
+---started typing, or clients that filter on the typed text drop them.
+---@param meta_by_label table<string, PyDepsCompletionItemMeta>
+---@param typed string
+---@return table<string, PyDepsCompletionItemMeta>
+function M.with_typed_spelling(meta_by_label, typed)
+  local prefix = util.normalize_package_name(typed)
+  for name, meta in pairs(meta_by_label) do
+    if name:sub(1, #prefix) == prefix and name:sub(1, #typed) ~= typed:lower() then
+      meta.filter_text = typed .. name:sub(#prefix + 1)
+    end
+  end
+  return meta_by_label
+end
+
 ---@param label string
 ---@param range table
 ---@param kind integer
@@ -88,14 +104,8 @@ local function make_item(label, range, kind, meta)
     if meta.label_details then
       item.labelDetails = meta.label_details
     end
-    if meta.documentation then
-      item.documentation = meta.documentation
-    end
-    if meta.insert_text then
-      item.insertText = meta.insert_text
-    end
-    if meta.sort_text then
-      item.sortText = meta.sort_text
+    if meta.filter_text then
+      item.filterText = meta.filter_text
     end
   end
   return item

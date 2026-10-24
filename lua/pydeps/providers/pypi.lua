@@ -24,6 +24,7 @@ local metadata = require("pydeps.providers.pypi.metadata")
 local search = require("pydeps.providers.pypi.search")
 local shared = require("pydeps.providers.pypi.shared")
 local util = require("pydeps.util")
+local pep440 = require("pydeps.core.version")
 
 local notify_once = shared.create_notify_once()
 
@@ -99,10 +100,16 @@ function M.sorted_versions(data)
     table.insert(versions, { version = version, time = latest or "" })
   end
   table.sort(versions, function(a, b)
-    if a.time == b.time then
-      return a.version > b.version
+    if a.time ~= b.time then
+      return a.time > b.time
     end
-    return a.time > b.time
+    -- Same upload time (or none at all): fall back to PEP 440 order so
+    -- "10.0" ranks above "9.0".
+    local order = pep440.compare(a.version, b.version)
+    if order and order ~= 0 then
+      return order > 0
+    end
+    return a.version > b.version
   end)
   local result = {}
   for _, item in ipairs(versions) do

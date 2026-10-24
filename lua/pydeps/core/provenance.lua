@@ -1,10 +1,12 @@
 local M = {}
 
+---Shortest dependency path from `root` to `target`, both included.
 ---@param graph table<string, string[]>
 ---@param root string
 ---@param target string
 ---@return string[]?
-local function bfs_path(graph, root, target)
+function M.find_path(graph, root, target)
+  graph = graph or {}
   if root == target then
     return { root }
   end
@@ -31,34 +33,6 @@ local function bfs_path(graph, root, target)
     end
   end
   return nil
-end
-
----@param graph table<string, string[]>
----@param roots string[]
----@param target string
----@param max_paths? integer
----@return string[][]
-function M.find_paths(graph, roots, target, max_paths)
-  local results = {}
-  local limit = max_paths or 3
-  for _, root in ipairs(roots or {}) do
-    if limit > 0 and #results >= limit then
-      break
-    end
-    local path = bfs_path(graph or {}, root, target)
-    if path then
-      table.insert(results, path)
-    end
-  end
-  return results
-end
-
----@param graph table<string, string[]>
----@param root string
----@param target string
----@return string[]?
-function M.find_path(graph, root, target)
-  return bfs_path(graph or {}, root, target)
 end
 
 ---@param graph table<string, string[]>

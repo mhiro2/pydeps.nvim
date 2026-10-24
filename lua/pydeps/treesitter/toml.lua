@@ -3,13 +3,15 @@
 
 ---@class PyDepsDependency
 ---@field name string
----@field spec string
+---@field spec string Requirement with TOML escapes decoded
+---@field literal string The string literal as written, including quotes
 ---@field line integer
 ---@field col_start integer
 ---@field col_end integer
 ---@field comment_col? integer
 ---@field group? string
 
+local lock_value = require("pydeps.sources.lock_value")
 local util = require("pydeps.util")
 
 local M = {}
@@ -190,72 +192,6 @@ local function build_comment_map(bufnr, tree_root)
   return map
 end
 
----Get comment column for a line
----@param bufnr integer
----@param line integer 0-indexed line number
----@return integer|nil comment_col 1-indexed column, or nil if no comment
-function M.get_comment_col(bufnr, line)
-  local parser = get_parser(bufnr)
-  if not parser then
-    return nil
-  end
-
-  local tree = parser:parse()[1]
-  if not tree then
-    return nil
-  end
-
-  local root = tree:root()
-
-  local query = ensure_comment_query()
-  if not query then
-    return nil
-  end
-
-  for _, node in query:iter_captures(root, bufnr, line, line + 1) do
-    local start_row, start_col = node:range()
-    if start_row == line then
-      return start_col + 1 -- Convert to 1-indexed
-    end
-  end
-
-  return nil
-end
-
----Get section info for dependencies
----@param bufnr integer
----@return table<string, {start_line: integer, end_line: integer}> section_ranges
-function M.get_section_ranges(bufnr)
-  local parser = get_parser(bufnr)
-  if not parser then
-    return {}
-  end
-
-  local tree = parser:parse()[1]
-  if not tree then
-    return {}
-  end
-
-  local root = tree:root()
-  local sections = {}
-
-  for node in root:iter_children() do
-    if node:type() == "table" or node:type() == "table_array_element" then
-      local key_node = find_key_node(node)
-      if key_node then
-        local start_row, _, end_row, _ = node:range()
-        local key_text = vim.treesitter.get_node_text(key_node, bufnr)
-        sections[key_text] = {
-          start_line = start_row + 1, -- Convert to 1-indexed
-          end_line = end_row + 1,
-        }
-      end
-    end
-  end
-
-  return sections
-end
-
 ---Parse dependencies from an array node
 ---@param bufnr integer
 ---@param array_node table Tree-sitter node
@@ -270,8 +206,11 @@ local function parse_array_dependencies(bufnr, array_node, section, comment_map)
       local start_row, start_col, _, end_col = child:range()
       local value = vim.treesitter.get_node_text(child, bufnr)
 
-      -- Remove quotes
-      local unquoted = value:match("^[\"'](.+)[\"']$") or value
+      -- Decode escapes so `\"` in a marker reaches the evaluator as `"`.
+      local unquoted = lock_value.parse(value)
+      if type(unquoted) ~= "string" then
+        unquoted = value:match("^[\"'](.+)[\"']$") or value
+      end
 
       local name = util.parse_requirement_name(unquoted)
       if name then
@@ -279,6 +218,7 @@ local function parse_array_dependencies(bufnr, array_node, section, comment_map)
         table.insert(deps, {
           name = name,
           spec = unquoted,
+          literal = value,
           line = start_row + 1, -- Convert to 1-indexed
           col_start = start_col + 1,
           col_end = end_col,
@@ -374,28 +314,6 @@ function M.dependency_section_at(bufnr, row, col)
     node = node:parent()
   end
   return nil
-end
-
----Parse dependencies from file path using Tree-sitter
----@param path string
----@return PyDepsDependency[]
-function M.parse_file(path)
-  if vim.fn.filereadable(path) ~= 1 then
-    return {}
-  end
-
-  -- Create a temporary buffer to parse the file
-  local bufnr = vim.api.nvim_create_buf(false, true)
-  local lines = vim.fn.readfile(path)
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-  vim.bo[bufnr].filetype = "toml"
-
-  local deps = M.parse_buffer(bufnr)
-
-  -- Clean up temporary buffer
-  vim.api.nvim_buf_delete(bufnr, { force = true })
-
-  return deps
 end
 
 return M

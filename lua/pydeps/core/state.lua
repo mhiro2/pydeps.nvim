@@ -7,6 +7,7 @@ local project = require("pydeps.core.project")
 local diagnostics = require("pydeps.ui.diagnostics")
 local info = require("pydeps.ui.info")
 local ui_shared = require("pydeps.ui.shared")
+local util = require("pydeps.util")
 local virtual_text = require("pydeps.ui.virtual_text")
 local uv = vim.uv
 
@@ -36,7 +37,7 @@ local function refresh_buffers_with_dep(name)
     M.refresh_all()
     return
   end
-  local target = name:lower()
+  local target = util.normalize_package_name(name)
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(bufnr) and buffer_context.is_pyproject_buf(bufnr) then
       for _, dep in ipairs(buffer_context.get_deps(bufnr) or {}) do

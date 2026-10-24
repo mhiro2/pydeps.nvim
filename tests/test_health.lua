@@ -1,6 +1,7 @@
 local MiniTest = require("mini.test")
+local helpers = require("tests.test_helpers")
 
-local T = MiniTest.new_set({
+local T = helpers.new_set({
   hooks = {
     pre_case = function()
       package.loaded["pydeps.config"] = nil
@@ -10,15 +11,10 @@ local T = MiniTest.new_set({
   },
 })
 
----@param version vim.Version
----@return string
-local function version_string(version)
-  return string.format("%d.%d.%d", version.major, version.minor, version.patch)
-end
-
 ---@param ts_available boolean
+---@param nvim_version? string
 ---@return table<string, string[]>
-local function run_health(ts_available)
+local function run_health(ts_available, nvim_version)
   require("pydeps.config").setup({})
 
   local messages = {
@@ -29,10 +25,7 @@ local function run_health(ts_available)
     start = {},
   }
 
-  local original_health = vim.health
-  local original_executable = vim.fn.executable
-
-  vim.health = {
+  helpers.stub(vim, "health", {
     start = function(message)
       table.insert(messages.start, message)
     end,
@@ -48,33 +41,55 @@ local function run_health(ts_available)
     info = function(message)
       table.insert(messages.info, message)
     end,
-  }
-
-  vim.fn.executable = function(_)
+  })
+  helpers.stub(vim.fn, "executable", function(_)
     return 0
+  end)
+  if nvim_version then
+    local version = vim.version
+    helpers.stub(
+      vim,
+      "version",
+      setmetatable({}, {
+        __index = version,
+        __call = function()
+          return version.parse(nvim_version)
+        end,
+      })
+    )
   end
-
-  package.loaded["pydeps.treesitter.toml"] = {
+  helpers.stub_module("pydeps.treesitter.toml", {
     is_available = function()
       return ts_available
     end,
-  }
+  })
 
   require("pydeps.health").check()
-
-  vim.health = original_health
-  vim.fn.executable = original_executable
-  package.loaded["pydeps.treesitter.toml"] = nil
-
   return messages
 end
 
-T["check reports Neovim 0.12 as minimum version"] = function()
-  local messages = run_health(true)
-  local current = version_string(vim.version())
+T["check enforces Neovim 0.12 as minimum version"] = function()
+  local cases = {
+    { version = "0.11.5", error = "Neovim version: 0.11.5 (expected >= 0.12.0)" },
+    { version = "0.12.0", ok = "Neovim version: 0.12.0" },
+    { version = "1.0.2", ok = "Neovim version: 1.0.2" },
+  }
+  for _, case in ipairs(cases) do
+    package.loaded["pydeps.health"] = nil
+    local messages = run_health(true, case.version)
+    MiniTest.expect.equality(messages.start[1], "pydeps.nvim")
+    local reported = vim.tbl_filter(function(msg)
+      return vim.startswith(msg, "Neovim version")
+    end, vim.list_extend(vim.list_extend({}, messages.ok), messages.error))
+    MiniTest.expect.equality(reported, { case.ok or case.error })
+    MiniTest.expect.equality(vim.tbl_contains(messages.ok, case.ok or ""), case.ok ~= nil)
+    helpers.restore_all()
+  end
+end
 
-  MiniTest.expect.equality(messages.start[1], "pydeps.nvim")
-  MiniTest.expect.equality(vim.tbl_contains(messages.ok, "Neovim version: " .. current), true)
+T["check reports an available TOML parser"] = function()
+  local messages = run_health(true)
+
   MiniTest.expect.equality(vim.tbl_contains(messages.ok, "Tree-sitter: TOML parser available"), true)
 end
 

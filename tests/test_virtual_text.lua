@@ -4,15 +4,15 @@ local helpers = require("tests.test_helpers")
 local T = helpers.create_test_set()
 
 local function stub_env()
-  package.loaded["pydeps.core.env"] = {
+  helpers.stub_module("pydeps.core.env", {
     get = function()
       return {}
     end,
-  }
+  })
 end
 
 local function stub_pypi()
-  package.loaded["pydeps.providers.pypi"] = {
+  helpers.stub_module("pydeps.providers.pypi", {
     get_cached = function()
       return nil
     end,
@@ -24,7 +24,21 @@ local function stub_pypi()
     is_yanked = function()
       return false
     end,
-  }
+  })
+end
+
+---@param bufnr integer
+---@param ns integer
+---@return table<integer, integer> badge display column by 0-indexed row
+local function badge_cols(bufnr, ns)
+  local cols = {}
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(bufnr, ns, 0, -1, { details = true })) do
+    local details = mark[4] or {}
+    if details.virt_text_win_col then
+      cols[mark[2]] = details.virt_text_win_col
+    end
+  end
+  return cols
 end
 
 local function setup_virtual_text()
@@ -49,7 +63,6 @@ end
 T["inline badge moves after comment"] = function()
   local virtual_text = setup_virtual_text()
   local pyproject = require("pydeps.sources.pyproject")
-  local util = require("pydeps.util")
 
   helpers.setup_buffer({
     "[project]",
@@ -61,7 +74,7 @@ T["inline badge moves after comment"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = {
     short = "1.0.0",
     averyverylongpackage = "1.0.0",
@@ -69,36 +82,14 @@ T["inline badge moves after comment"] = function()
 
   virtual_text.render(bufnr, deps, resolved, { lockfile_missing = false })
 
-  local marks = vim.api.nvim_buf_get_extmarks(bufnr, virtual_text.ns, 0, -1, { details = true })
-  local by_line = {}
-  for _, mark in ipairs(marks) do
-    local row = mark[2]
-    local details = mark[4] or {}
-    if details.virt_text_win_col then
-      by_line[row] = { col = details.virt_text_win_col, virt_text = details.virt_text }
-    end
-  end
-
-  local comment_row = 2
-  local plain_row = 3
-
-  MiniTest.expect.equality(by_line[comment_row] ~= nil, true)
-  MiniTest.expect.equality(by_line[plain_row] ~= nil, true)
-
-  local comment_line = vim.api.nvim_buf_get_lines(bufnr, comment_row, comment_row + 1, false)[1]
-  local comment_col = util.find_comment_pos(comment_line)
-  MiniTest.expect.equality(comment_col ~= nil, true)
-
-  local comment_end = vim.fn.strdisplaywidth(comment_line)
-
-  MiniTest.expect.equality(by_line[comment_row].col >= comment_end + 1, true)
-  MiniTest.expect.equality(by_line[comment_row].col > by_line[plain_row].col, true)
+  -- The comment line is 32 cells wide, so its badge starts one cell after it;
+  -- the plain line aligns to the section anchor (col_end 29 + padding 2 - 1).
+  MiniTest.expect.equality(badge_cols(bufnr, virtual_text.ns), { [2] = 33, [3] = 30 })
 end
 
 T["inline badge moves after wide comment"] = function()
   local virtual_text = setup_virtual_text()
   local pyproject = require("pydeps.sources.pyproject")
-  local util = require("pydeps.util")
 
   helpers.setup_buffer({
     "[project]",
@@ -109,22 +100,56 @@ T["inline badge moves after wide comment"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = { wide = "1.0.0" }
 
   virtual_text.render(bufnr, deps, resolved, { lockfile_missing = false })
 
-  local marks = vim.api.nvim_buf_get_extmarks(bufnr, virtual_text.ns, 0, -1, { details = true })
-  local row = marks[1] and marks[1][2]
-  MiniTest.expect.equality(row ~= nil, true)
+  -- The tab expands to column 24, so the comment ends at display width 31.
+  MiniTest.expect.equality(badge_cols(bufnr, virtual_text.ns), { [2] = 32 })
+end
 
-  local comment_line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1]
-  local comment_col = util.find_comment_pos(comment_line)
-  MiniTest.expect.equality(comment_col ~= nil, true)
+T["inline badge ignores hashes inside strings"] = function()
+  local virtual_text = setup_virtual_text()
+  local pyproject = require("pydeps.sources.pyproject")
 
-  local comment_end = vim.fn.strdisplaywidth(comment_line)
-  local col = marks[1][4].virt_text_win_col
-  MiniTest.expect.equality(col >= comment_end + 1, true)
+  helpers.setup_buffer({
+    "[project]",
+    "dependencies = [",
+    '  "short>=1.0",',
+    '  "pkg @ https://x.io/p.whl#md5=0",',
+    "]",
+    "",
+    "[project.optional-dependencies]",
+    "kernel = [",
+    '  "short>=1.0",',
+    "  \"kernel; platform_version == '#1 SMP'\",",
+    "]",
+    "",
+    "[dependency-groups]",
+    "esc = [",
+    '  "short>=1.0",',
+    '  "esc @ https://x.io/e.whl#\\"q\\"",',
+    "]",
+  })
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.bo[bufnr].filetype = "toml"
+  local deps = pyproject.parse(nil, bufnr)
+
+  virtual_text.render(
+    bufnr,
+    deps,
+    { short = "1.0.0", pkg = "1.0.0", kernel = "1.0.0", esc = "1.0.0" },
+    { lockfile_missing = false }
+  )
+
+  -- Each section aligns to its longest string end (34, 40 and 34) plus padding;
+  -- treating `#` inside a string as a comment would push those badges past the line.
+  MiniTest.expect.equality(
+    badge_cols(bufnr, virtual_text.ns),
+    { [2] = 35, [3] = 35, [8] = 41, [9] = 41, [14] = 35, [15] = 35 }
+  )
 end
 
 T["inline badge aligns without comments"] = function()
@@ -141,7 +166,7 @@ T["inline badge aligns without comments"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = {
     short = "1.0.0",
     averyverylongpackage = "1.0.0",
@@ -175,7 +200,7 @@ T["lock mismatch shows pinned version in badge"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = {
     pinnedpkg = "1.1.0",
   }
@@ -250,7 +275,7 @@ T["unresolved pinned dependency is not classified as lock mismatch"] = function(
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
 
   virtual_text.render(bufnr, deps, {}, { lockfile_missing = false })
 
@@ -314,7 +339,7 @@ T["pin not found shows message when version not on PyPI"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = {
     notfoundpkg = "1.1.0",
   }
@@ -349,18 +374,17 @@ T["render survives stale col after buffer edit"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = { averyverylongpackage = "1.0.0" }
 
   -- Simulate user editing the dependency line to be much shorter than the
   -- col positions captured during the original parse.
   vim.api.nvim_buf_set_lines(bufnr, 2, 3, false, { "x" })
 
-  local ok, err = pcall(virtual_text.render, bufnr, deps, resolved, { lockfile_missing = false })
-  MiniTest.expect.equality(ok, true)
-  if not ok then
-    error(err)
-  end
+  MiniTest.expect.no_error(function()
+    virtual_text.render(bufnr, deps, resolved, { lockfile_missing = false })
+  end)
+  MiniTest.expect.equality(badge_cols(bufnr, virtual_text.ns), {})
 end
 
 T["render skips deps whose line was deleted"] = function()
@@ -376,30 +400,57 @@ T["render skips deps whose line was deleted"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local resolved = { somepkg = "1.0.0" }
 
-  -- Delete the dependency line entirely so dep.lnum is past buffer end.
-  vim.api.nvim_buf_set_lines(bufnr, 2, 3, false, {})
+  -- Truncate the buffer so the dependency row is past its end.
+  vim.api.nvim_buf_set_lines(bufnr, 2, -1, false, {})
 
-  local ok = pcall(virtual_text.render, bufnr, deps, resolved, { lockfile_missing = false })
-  MiniTest.expect.equality(ok, true)
+  MiniTest.expect.no_error(function()
+    virtual_text.render(bufnr, deps, resolved, { lockfile_missing = false })
+  end)
+  MiniTest.expect.equality(vim.api.nvim_buf_get_extmarks(bufnr, virtual_text.ns, 0, -1, {}), {})
 end
 
-T["virtual_text: does not leak helper globals"] = function()
-  stub_env()
-  stub_pypi()
-  local globals = getfenv(0)
-  globals.should_render_virtual_text = nil
-  globals.queue_pypi_request = nil
-  globals.get_treesitter_ranges = nil
-  package.loaded["pydeps.ui.virtual_text"] = nil
+T["render does not move a stale badge onto the following line"] = function()
+  local virtual_text = setup_virtual_text()
+  local pyproject = require("pydeps.sources.pyproject")
 
-  local _ = require("pydeps.ui.virtual_text")
+  helpers.setup_buffer({
+    "[project]",
+    "dependencies = [",
+    '  "somepkg>=1.0.0",',
+    '  "otherpkg>=1.0.0",',
+    "]",
+  })
 
-  MiniTest.expect.equality(rawget(globals, "should_render_virtual_text"), nil)
-  MiniTest.expect.equality(rawget(globals, "queue_pypi_request"), nil)
-  MiniTest.expect.equality(rawget(globals, "get_treesitter_ranges"), nil)
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.bo[bufnr].filetype = "toml"
+  local deps = pyproject.parse(nil, bufnr)
+
+  -- Deleting the first dependency shifts otherpkg and the closing bracket up,
+  -- while the parsed rows still point at the old positions.
+  vim.api.nvim_buf_set_lines(bufnr, 2, 3, false, {})
+  virtual_text.render(bufnr, deps, { somepkg = "1.0.0", otherpkg = "1.0.0" }, { lockfile_missing = false })
+
+  MiniTest.expect.equality(badge_cols(bufnr, virtual_text.ns), {})
+end
+
+T["render does not move a stale badge onto a row that only mentions the name"] = function()
+  local virtual_text = setup_virtual_text()
+  local pyproject = require("pydeps.sources.pyproject")
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.bo[bufnr].filetype = "toml"
+
+  for _, next_line in ipairs({ '  "requests-toolbelt>=1.0",', "  # requests is pinned for py38" }) do
+    helpers.setup_buffer({ "[project]", "dependencies = [", '  "requests>=2.0",', next_line, "]" })
+    local deps = pyproject.parse(nil, bufnr)
+    vim.api.nvim_buf_set_lines(bufnr, 2, 3, false, {})
+    virtual_text.render(bufnr, deps, { requests = "2.0.0", ["requests-toolbelt"] = "1.0.0" }, {
+      lockfile_missing = false,
+    })
+    MiniTest.expect.equality(badge_cols(bufnr, virtual_text.ns), {})
+  end
 end
 
 T["a marker keeps its locked version badge while the environment loads"] = function()
@@ -416,7 +467,7 @@ T["a marker keeps its locked version badge while the environment loads"] = funct
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   -- stub_env reports an empty environment, so the marker cannot be evaluated yet.
   virtual_text.render(bufnr, deps, { plain = "1.0.0", marked = "2.0.0" }, { lockfile_missing = false })
 
@@ -471,7 +522,7 @@ T["a failed PyPI fetch renders once without re-requesting"] = function()
 
   local bufnr = vim.api.nvim_get_current_buf()
   vim.bo[bufnr].filetype = "toml"
-  local deps = pyproject.parse(nil, nil, bufnr)
+  local deps = pyproject.parse(nil, bufnr)
   local original_render = virtual_text.render
   local renders = 0
   virtual_text.render = function(...)

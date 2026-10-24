@@ -288,6 +288,19 @@ local function parse_lines(lines)
   return data
 end
 
+-- A lockfile that exists but cannot be opened (e.g. permissions) is reported
+-- once per path and error; a missing lockfile is reported by the caller.
+---@param path string
+---@param err? string
+local function report_read_failure(path, err)
+  vim.schedule(function()
+    vim.notify_once(
+      string.format("pydeps: Failed to read lockfile '%s'. Error: %s", path, err or "unknown error"),
+      vim.log.levels.ERROR
+    )
+  end)
+end
+
 ---@param path? string
 ---@return PyDepsLockfileData
 function M.parse_full(path)
@@ -298,12 +311,11 @@ function M.parse_full(path)
   local lines = {}
   local file, err = io.open(path, "r")
   if not file then
-    -- Only notify if path exists but cannot be opened (permission issues, etc.)
-    if path and vim.fn.filereadable(path) == 1 then
-      vim.notify(
-        string.format("pydeps: Failed to read lockfile '%s'. Error: %s", path, err or "unknown error"),
-        vim.log.levels.ERROR
-      )
+    -- Only a missing file is expected; a permission error on the file or a
+    -- parent directory must still be reported.
+    local stat, _, stat_err = vim.uv.fs_stat(path)
+    if stat or stat_err ~= "ENOENT" then
+      report_read_failure(path, err)
     end
     return { resolved = {}, packages = {} }
   end
@@ -326,11 +338,8 @@ function M.parse_async(path, cb)
   local uv = vim.uv
   uv.fs_open(path, "r", 438, function(open_err, fd)
     if open_err or not fd then
-      if vim.fn.filereadable(path) == 1 then
-        vim.notify(
-          string.format("pydeps: Failed to read lockfile '%s'. Error: %s", path, open_err or "unknown error"),
-          vim.log.levels.ERROR
-        )
+      if not vim.startswith(open_err or "", "ENOENT") then
+        report_read_failure(path, open_err)
       end
       cb(nil, open_err or "open failed")
       return
@@ -359,12 +368,6 @@ function M.parse_async(path, cb)
       end)
     end)
   end)
-end
-
----@param path? string
----@return PyDepsResolved
-function M.parse(path)
-  return M.parse_full(path).resolved
 end
 
 return M

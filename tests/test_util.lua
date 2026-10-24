@@ -8,6 +8,10 @@ T["parse_requirement_name extracts name"] = function()
   MiniTest.expect.equality(util.parse_requirement_name("requests>=2.0"), "requests")
   MiniTest.expect.equality(util.parse_requirement_name("Foo-Bar[extra]>=1.0; python_version>='3.11'"), "foo-bar")
   MiniTest.expect.equality(util.parse_requirement_name(""), nil)
+  -- PEP 503: case and runs of `-`, `_` and `.` do not distinguish packages.
+  MiniTest.expect.equality(util.parse_requirement_name("Charset_Normalizer>=3"), "charset-normalizer")
+  MiniTest.expect.equality(util.parse_requirement_name("zope.interface"), "zope-interface")
+  MiniTest.expect.equality(util.parse_requirement_name("a__b-.c"), "a-b-c")
 end
 
 T["parse_requirement_extras extracts extras"] = function()
@@ -18,15 +22,16 @@ T["parse_requirement_extras extracts extras"] = function()
   MiniTest.expect.equality(util.parse_requirement_extras(""), {})
 end
 
-T["now returns current time in seconds"] = function()
+T["now converts the loop clock from milliseconds to seconds"] = function()
   local util = require("pydeps.util")
-  local t1 = util.now()
-  MiniTest.expect.equality(type(t1), "number")
-  MiniTest.expect.equality(t1 > 0, true)
-  -- now() should return time in seconds (uv.now() / 1000)
-  -- uv.now() returns milliseconds since Neovim started
-  local t2 = util.now()
-  MiniTest.expect.equality(t2 >= t1, true)
+  local clock = 12345
+  helpers.stub(vim.uv, "now", function()
+    return clock
+  end)
+
+  MiniTest.expect.equality(util.now(), 12.345)
+  clock = clock + 3000
+  MiniTest.expect.equality(util.now(), 15.345)
 end
 
 T["safe_close_timer handles nil"] = function()

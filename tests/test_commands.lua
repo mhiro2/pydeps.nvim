@@ -11,202 +11,191 @@ local function create_project(lines, packages)
   helpers.create_uv_lock(dir, packages)
   vim.cmd("edit " .. path)
   helpers.setup_buffer(lines)
+  helpers.defer(function()
+    vim.fn.delete(dir, "rf")
+  end)
   return dir, path
 end
 
-local function cleanup(dir)
-  if dir then
-    vim.fn.delete(dir, "rf")
-  end
+---@param path string
+---@return string
+local function realpath(path)
+  return vim.uv.fs_realpath(path) or path
 end
 
-T["update rejects @ reference"] = function()
-  local commands = require("pydeps.commands")
-  local dir = create_project({
-    "[project]",
-    'dependencies = ["package @ git+https://github.com/user/repo.git"]',
-  })
+---@return { messages: string[], levels: integer[] }
+local function capture_notify()
+  local captured = { messages = {}, levels = {} }
+  helpers.stub(vim, "notify", function(msg, level)
+    table.insert(captured.messages, msg)
+    table.insert(captured.levels, level)
+  end)
+  return captured
+end
 
-  local bufnr = vim.api.nvim_get_current_buf()
-  vim.bo[bufnr].filetype = "toml"
-
-  local notified = false
-  local original_notify = vim.notify
-  vim.notify = function(msg, _level)
-    if msg:match("direct reference") then
-      notified = true
+---@param captured { messages: string[] }
+---@param pattern string
+---@return boolean
+local function notified(captured, pattern)
+  for _, msg in ipairs(captured.messages) do
+    if msg:find(pattern) then
+      return true
     end
   end
-
-  commands.update("package")
-
-  vim.notify = original_notify
-  MiniTest.expect.equality(notified, true)
-  cleanup(dir)
+  return false
 end
 
-T["update rejects https URL"] = function()
-  local commands = require("pydeps.commands")
-  local dir = create_project({
-    "[project]",
-    'dependencies = ["package @ https://example.com/package.tar.gz"]',
+---@return { calls: string[], respond: fun(meta: table?) }
+local function stub_pypi_get()
+  local spy = { calls = {} }
+  local pending = {}
+  helpers.stub_module("pydeps.providers.pypi", {
+    get = function(name, cb)
+      table.insert(spy.calls, name)
+      table.insert(pending, cb)
+    end,
   })
-
-  local bufnr = vim.api.nvim_get_current_buf()
-  vim.bo[bufnr].filetype = "toml"
-
-  local notified = false
-  local original_notify = vim.notify
-  vim.notify = function(msg, _level)
-    if msg:match("direct reference") then
-      notified = true
+  spy.respond = function(meta)
+    for _, cb in ipairs(pending) do
+      cb(meta)
     end
+    pending = {}
   end
-
-  commands.update("package")
-
-  vim.notify = original_notify
-  MiniTest.expect.equality(notified, true)
-  cleanup(dir)
+  return spy
 end
 
-T["update rejects file:// URL"] = function()
+T["update refuses direct references without fetching or editing"] = function()
+  local specs = {
+    "package @ git+https://github.com/user/repo.git",
+    "package @ https://example.com/package.tar.gz",
+    "package @ file:///path/to/package",
+    "package @ ./local/package",
+  }
   local commands = require("pydeps.commands")
-  local dir = create_project({
+  for _, spec in ipairs(specs) do
+    local pypi = stub_pypi_get()
+    local captured = capture_notify()
+    create_project({
+      "[project]",
+      'dependencies = ["' .. spec .. '"]',
+    })
+    local bufnr = vim.api.nvim_get_current_buf()
+    local before = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+    commands.update("package")
+
+    MiniTest.expect.equality(notified(captured, "direct reference"), true)
+    MiniTest.expect.equality(pypi.calls, {})
+    MiniTest.expect.equality(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), before)
+  end
+end
+
+T["update rewrites the version spec with the latest release and refreshes"] = function()
+  local pypi = stub_pypi_get()
+  local captured = capture_notify()
+  local refreshed = {}
+  helpers.stub(require("pydeps.core.state"), "refresh", function(bufnr)
+    table.insert(refreshed, bufnr)
+  end)
+  create_project({
     "[project]",
-    'dependencies = ["package @ file:///path/to/package"]',
+    "dependencies = [",
+    '  "requests>=2",',
+    '  "rich>=13",',
+    "]",
   })
-
   local bufnr = vim.api.nvim_get_current_buf()
-  vim.bo[bufnr].filetype = "toml"
 
-  local notified = false
-  local original_notify = vim.notify
-  vim.notify = function(msg, _level)
-    if msg:match("direct reference") then
-      notified = true
-    end
-  end
+  require("pydeps.commands").update("requests")
 
-  commands.update("package")
+  MiniTest.expect.equality(pypi.calls, { "requests" })
+  MiniTest.expect.equality(refreshed, {})
+  pypi.respond({ info = { version = "2.32.3" } })
 
-  vim.notify = original_notify
-  MiniTest.expect.equality(notified, true)
-  cleanup(dir)
-end
-
-T["update rejects relative path"] = function()
-  local commands = require("pydeps.commands")
-  local dir = create_project({
+  MiniTest.expect.equality(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), {
     "[project]",
-    'dependencies = ["package @ ./local/package"]',
+    "dependencies = [",
+    '  "requests>=2.32.3",',
+    '  "rich>=13",',
+    "]",
   })
-
-  local bufnr = vim.api.nvim_get_current_buf()
-  vim.bo[bufnr].filetype = "toml"
-
-  local notified = false
-  local original_notify = vim.notify
-  vim.notify = function(msg, _level)
-    if msg:match("direct reference") then
-      notified = true
-    end
-  end
-
-  commands.update("package")
-
-  vim.notify = original_notify
-  MiniTest.expect.equality(notified, true)
-  cleanup(dir)
+  MiniTest.expect.equality(refreshed, { bufnr })
+  MiniTest.expect.equality(captured.messages, {})
 end
 
-T["update allows version spec"] = function()
-  local commands = require("pydeps.commands")
-  local dir = create_project({
+T["update leaves the buffer alone when metadata is unavailable"] = function()
+  local pypi = stub_pypi_get()
+  local captured = capture_notify()
+  create_project({
     "[project]",
     'dependencies = ["requests>=2"]',
   })
-
   local bufnr = vim.api.nvim_get_current_buf()
-  vim.bo[bufnr].filetype = "toml"
+  local before = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
-  local notified = false
-  local original_notify = vim.notify
-  vim.notify = function(msg, _level)
-    if msg:match("direct reference") then
-      notified = true
-    end
-  end
+  require("pydeps.commands").update("requests")
+  pypi.respond(nil)
 
-  commands.update("requests")
-
-  vim.notify = original_notify
-  MiniTest.expect.equality(notified, false)
-  cleanup(dir)
+  MiniTest.expect.equality(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), before)
+  MiniTest.expect.equality(notified(captured, "metadata not available"), true)
 end
 
 T["update escapes pattern characters in version spec"] = function()
-  local original_commands = package.loaded["pydeps.commands"]
-  local original_pypi = package.loaded["pydeps.providers.pypi"]
-
-  package.loaded["pydeps.commands"] = nil
-  package.loaded["pydeps.providers.pypi"] = {
-    get = function(_, cb)
-      cb({ info = { version = "2.0.0" } })
-    end,
-  }
-
-  local commands = require("pydeps.commands")
-  local dir = create_project({
+  local pypi = stub_pypi_get()
+  create_project({
     "[project]",
     'dependencies = ["pkg==1.0+cpu"]',
   })
-
   local bufnr = vim.api.nvim_get_current_buf()
-  vim.bo[bufnr].filetype = "toml"
 
-  commands.update("pkg")
+  require("pydeps.commands").update("pkg")
+  pypi.respond({ info = { version = "2.0.0" } })
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   MiniTest.expect.equality(vim.tbl_contains(lines, 'dependencies = ["pkg==2.0.0"]'), true)
-  cleanup(dir)
-
-  package.loaded["pydeps.commands"] = original_commands
-  package.loaded["pydeps.providers.pypi"] = original_pypi
 end
 
-T["audit collects lockfile packages and renders result"] = function()
-  local original_commands = package.loaded["pydeps.commands"]
-  local original_osv = package.loaded["pydeps.providers.osv"]
-  local original_security_audit = package.loaded["pydeps.ui.security_audit"]
-
-  local captured_packages = nil
-  local captured_show = nil
-  package.loaded["pydeps.commands"] = nil
-  package.loaded["pydeps.providers.osv"] = {
+---@return { results: table?, opts: table? }
+local function stub_osv_audit(results)
+  local captured = {}
+  helpers.stub_module("pydeps.providers.osv", {
     audit = function(packages, cb)
-      captured_packages = packages
-      cb({
-        {
-          name = "requests",
-          version = "2.31.0",
-          vulnerabilities = {},
-        },
-      }, nil)
+      captured.packages = packages
+      if results then
+        cb(results, nil)
+      end
     end,
-  }
-  package.loaded["pydeps.ui.security_audit"] = {
-    show = function(results, opts)
-      captured_show = { results = results, opts = opts }
-      return {
-        scanned_packages = 2,
-        vulnerable_packages = 0,
-        total_vulnerabilities = 0,
-      }
-    end,
-  }
+  })
+  return captured
+end
 
-  local commands = require("pydeps.commands")
+T["audit sends lockfile packages to OSV and reports the summary"] = function()
+  local osv = stub_osv_audit({
+    {
+      name = "requests",
+      version = "2.31.0",
+      status = "vulnerable",
+      vulnerabilities = {
+        { id = "GHSA-1234", summary = "Leak", severity = "HIGH", severity_scores = {}, aliases = {} },
+        { id = "GHSA-5678", summary = "Crash", severity = "LOW", severity_scores = {}, aliases = {} },
+      },
+    },
+    { name = "urllib3", version = "2.2.0", status = "clean", vulnerabilities = {} },
+  })
+  local shown
+  helpers.stub(require("pydeps.ui.output"), "show", function(title, lines)
+    shown = { title = title, lines = lines }
+  end)
+  local events = {}
+  local autocmd = vim.api.nvim_create_autocmd("User", {
+    pattern = "PyDepsAuditCompleted",
+    callback = function(args)
+      table.insert(events, args.data)
+    end,
+  })
+  helpers.defer(function()
+    vim.api.nvim_del_autocmd(autocmd)
+  end)
   local dir = create_project({
     "[project]",
     'dependencies = ["requests", "urllib3"]',
@@ -215,87 +204,65 @@ T["audit collects lockfile packages and renders result"] = function()
     urllib3 = "2.2.0",
   })
 
-  commands.audit()
-  vim.wait(200, function()
-    return captured_show ~= nil
-  end, 10)
+  vim.cmd("PyDepsAudit")
+  helpers.wait_for(function()
+    return #events == 1
+  end, "PyDepsAuditCompleted")
 
-  MiniTest.expect.equality(captured_packages ~= nil, true)
-  MiniTest.expect.equality(#captured_packages, 2)
-  MiniTest.expect.equality(captured_packages[1].name, "requests")
-  MiniTest.expect.equality(captured_packages[2].name, "urllib3")
-  local actual_root = vim.uv.fs_realpath(captured_show.opts.root) or captured_show.opts.root
-  local expected_root = vim.uv.fs_realpath(dir) or dir
-  MiniTest.expect.equality(actual_root, expected_root)
-  MiniTest.expect.equality(captured_show.results[1].name, "requests")
-
-  cleanup(dir)
-  package.loaded["pydeps.commands"] = original_commands
-  package.loaded["pydeps.providers.osv"] = original_osv
-  package.loaded["pydeps.ui.security_audit"] = original_security_audit
+  MiniTest.expect.equality(osv.packages, {
+    { name = "requests", version = "2.31.0" },
+    { name = "urllib3", version = "2.2.0" },
+  })
+  MiniTest.expect.equality(shown.title, "PyDeps Audit")
+  MiniTest.expect.equality(vim.list_slice(shown.lines, 1, 6), {
+    "PyDeps Security Audit (OSV)",
+    "Scanned packages: 2",
+    "Failed packages: 0",
+    "Not scanned packages: 0",
+    "Packages with vulnerabilities: 1",
+    "Total vulnerabilities: 2",
+  })
+  MiniTest.expect.equality(vim.tbl_contains(shown.lines, "  requests@2.31.0 (2)"), true)
+  MiniTest.expect.equality(realpath(events[1].root), realpath(dir))
+  events[1].root = nil
+  MiniTest.expect.equality(events[1], { scanned = 2, vulnerable_packages = 1, vulnerabilities = 2 })
 end
 
 T["audit includes every universal version and deduplicates sources"] = function()
-  local original_osv = package.loaded["pydeps.providers.osv"]
-  local captured
-  package.loaded["pydeps.providers.osv"] = {
-    audit = function(packages)
-      captured = packages
-    end,
-  }
+  local osv = stub_osv_audit(nil)
   local dir = create_project({ "[project]", 'dependencies = ["demo"]' })
   vim.fn.writefile(vim.fn.readfile("tests/fixtures/fork.uv.lock"), dir .. "/uv.lock")
   require("pydeps.core.cache").invalidate_lockfile(dir)
   require("pydeps.commands").audit()
   local found = {}
-  for _, pkg in ipairs(captured or {}) do
+  for _, pkg in ipairs(osv.packages or {}) do
     found[#found + 1] = pkg.name .. "@" .. pkg.version
   end
   MiniTest.expect.equality(found, { "app@0.1.0", "child@3.0", "demo@1.0", "demo@2.0", "same@1.0", "tester@1.0" })
-  cleanup(dir)
-  package.loaded["pydeps.providers.osv"] = original_osv
 end
 
 T["audit warns when uv.lock is missing"] = function()
-  local original_commands = package.loaded["pydeps.commands"]
-  package.loaded["pydeps.commands"] = nil
-  local commands = require("pydeps.commands")
-
+  local osv = stub_osv_audit(nil)
+  local captured = capture_notify()
   local dir = create_project({
     "[project]",
     'dependencies = ["requests"]',
   }, {
     requests = "2.31.0",
   })
+  vim.fn.delete(dir .. "/uv.lock")
 
-  local lock_path = dir .. "/uv.lock"
-  vim.fn.delete(lock_path)
+  require("pydeps.commands").audit()
 
-  local notified = false
-  local original_notify = vim.notify
-  vim.notify = function(msg, _level)
-    if msg:match("uv%.lock not found") then
-      notified = true
-    end
-  end
-
-  commands.audit()
-
-  vim.notify = original_notify
-  MiniTest.expect.equality(notified, true)
-  cleanup(dir)
-  package.loaded["pydeps.commands"] = original_commands
+  MiniTest.expect.equality(notified(captured, "uv%.lock not found"), true)
+  MiniTest.expect.equality(osv.packages, nil)
 end
 
 T["provenance uses project dependencies outside pyproject buffers"] = function()
-  local original_commands = package.loaded["pydeps.commands"]
-  local original_provenance_command = package.loaded["pydeps.commands.provenance"]
-  local original_provenance_ui = package.loaded["pydeps.ui.provenance"]
-
   local captured = nil
-  package.loaded["pydeps.commands"] = nil
-  package.loaded["pydeps.commands.provenance"] = nil
-  package.loaded["pydeps.ui.provenance"] = {
+  helpers.stub_module("pydeps.commands", nil)
+  helpers.stub_module("pydeps.commands.provenance", nil)
+  helpers.stub_module("pydeps.ui.provenance", {
     show = function(target, deps, graph)
       captured = {
         target = target,
@@ -304,7 +271,7 @@ T["provenance uses project dependencies outside pyproject buffers"] = function()
       }
       return true
     end,
-  }
+  })
 
   local commands = require("pydeps.commands")
   local dir = create_project({
@@ -328,21 +295,11 @@ T["provenance uses project dependencies outside pyproject buffers"] = function()
   MiniTest.expect.equality(#captured.deps, 2)
   MiniTest.expect.equality(captured.deps[1].name, "requests")
   MiniTest.expect.equality(captured.deps[2].name, "rich")
-
-  cleanup(dir)
-  package.loaded["pydeps.commands"] = original_commands
-  package.loaded["pydeps.commands.provenance"] = original_provenance_command
-  package.loaded["pydeps.ui.provenance"] = original_provenance_ui
 end
 
 T["info preserves lockfile loading state"] = function()
-  local original_cache = package.loaded["pydeps.core.cache"]
-  local original_commands = package.loaded["pydeps.commands"]
-  local original_info_command = package.loaded["pydeps.commands.info"]
-  local original_info = package.loaded["pydeps.ui.info"]
-
   local captured = nil
-  package.loaded["pydeps.core.cache"] = {
+  helpers.stub_module("pydeps.core.cache", {
     get_pyproject = function()
       return {
         {
@@ -357,10 +314,10 @@ T["info preserves lockfile loading state"] = function()
     get_lockfile = function()
       return { resolved = {} }, false, true
     end,
-  }
-  package.loaded["pydeps.commands"] = nil
-  package.loaded["pydeps.commands.info"] = nil
-  package.loaded["pydeps.ui.info"] = {
+  })
+  helpers.stub_module("pydeps.commands", nil)
+  helpers.stub_module("pydeps.commands.info", nil)
+  helpers.stub_module("pydeps.ui.info", {
     show = function(dep, resolved, opts)
       captured = {
         dep = dep,
@@ -368,7 +325,7 @@ T["info preserves lockfile loading state"] = function()
         opts = opts,
       }
     end,
-  }
+  })
 
   local commands = require("pydeps.commands")
   local dir = create_project({
@@ -383,73 +340,212 @@ T["info preserves lockfile loading state"] = function()
   MiniTest.expect.equality(captured.dep.name, "requests")
   MiniTest.expect.equality(captured.opts.lockfile_loading, true)
   MiniTest.expect.equality(captured.opts.lockfile_missing, false)
-  local actual_root = vim.uv.fs_realpath(captured.opts.root) or captured.opts.root
-  local expected_root = vim.uv.fs_realpath(dir) or dir
-  MiniTest.expect.equality(actual_root, expected_root)
-
-  cleanup(dir)
-  package.loaded["pydeps.core.cache"] = original_cache
-  package.loaded["pydeps.commands"] = original_commands
-  package.loaded["pydeps.commands.info"] = original_info_command
-  package.loaded["pydeps.ui.info"] = original_info
+  MiniTest.expect.equality(realpath(captured.opts.root), realpath(dir))
 end
 
-T["tree warns on unknown options and still invokes uv tree"] = function()
-  local original_uv = package.loaded["pydeps.providers.uv"]
-  local original_output = package.loaded["pydeps.ui.output"]
-  package.loaded["pydeps.providers.uv"] = {
-    tree_features_ready = function()
-      return true
-    end,
-    detect_tree_features = function(cb)
-      if cb then
-        cb()
-      end
-    end,
-    supports_tree_flag = function()
-      return false
-    end,
-    tree_command = function()
-      return {
-        cmd = { "uv", "tree" },
-        cwd = vim.fn.getcwd(),
-      }
-    end,
+-- `uv tree --help` output listing every flag the command knows except those
+-- in `unsupported`.
+---@param unsupported? string[]
+---@return string
+local function tree_help(unsupported)
+  local flags = {
+    "--frozen",
+    "--package",
+    "--depth",
+    "--invert",
+    "--universal",
+    "--show-sizes",
+    "--all-groups",
+    "--group",
+    "--no-group",
   }
-  package.loaded["pydeps.ui.output"] = {
-    run_command = function() end,
-  }
+  local lines = { "Usage: uv tree [OPTIONS]" }
+  for _, flag in ipairs(flags) do
+    if not vim.tbl_contains(unsupported or {}, flag) then
+      table.insert(lines, "      " .. flag)
+    end
+  end
+  return table.concat(lines, "\n")
+end
 
-  local commands = require("pydeps.commands")
+-- Run the real tree command against a stubbed uv binary and capture what
+-- would be spawned.
+---@param unsupported? string[]
+---@return { runs: table[] }
+local function stub_uv_tree(unsupported)
+  local spy = { runs = {} }
+  local original_executable = vim.fn.executable
+  helpers.stub(vim.fn, "executable", function(cmd)
+    if cmd == "uv" then
+      return 1
+    end
+    return original_executable(cmd)
+  end)
+  helpers.stub(vim, "system", function(_, _, on_exit)
+    on_exit({ code = 0, stdout = tree_help(unsupported), stderr = "" })
+  end)
+  helpers.stub(require("pydeps.ui.output"), "run_command", function(cmd, opts)
+    table.insert(spy.runs, { cmd = cmd, cwd = opts.cwd })
+  end)
+  local uv = require("pydeps.providers.uv")
+  uv._clear_tree_features_cache()
+  uv.detect_tree_features()
+  helpers.wait_for(uv.tree_features_ready, "uv tree feature detection")
+  return spy
+end
+
+T["tree passes parsed options to uv tree"] = function()
   local dir = create_project({
     "[project]",
     'dependencies = ["requests>=2"]',
   })
-  local bufnr = vim.api.nvim_get_current_buf()
-  vim.bo[bufnr].filetype = "toml"
-
-  local notified = false
-  local output_called = false
-  package.loaded["pydeps.ui.output"].run_command = function()
-    output_called = true
+  local cases = {
+    { cmd = "PyDepsTree --reverse requests", args = { "--frozen", "--package", "requests", "--invert" } },
+    { cmd = "PyDepsTree --invert requests", args = { "--frozen", "--package", "requests", "--invert" } },
+    { cmd = "PyDepsTree! requests", args = { "--frozen", "--package", "requests", "--invert" } },
+    {
+      cmd = "PyDepsTree requests --depth 2 --universal --show-sizes --all-groups --group dev --no-group test",
+      args = {
+        "--frozen",
+        "--package",
+        "requests",
+        "--depth",
+        "2",
+        "--universal",
+        "--show-sizes",
+        "--all-groups",
+        "--group",
+        "dev",
+        "--no-group",
+        "test",
+      },
+    },
+    { cmd = "PyDepsTree --resolve", args = {} },
+  }
+  local spy = stub_uv_tree()
+  for _, case in ipairs(cases) do
+    spy.runs = {}
+    vim.cmd(case.cmd)
+    MiniTest.expect.equality(#spy.runs, 1)
+    MiniTest.expect.equality(spy.runs[1].cmd, vim.list_extend({ "uv", "tree" }, case.args))
+    MiniTest.expect.equality(realpath(spy.runs[1].cwd), realpath(dir))
   end
+end
 
-  local original_notify = vim.notify
-  vim.notify = function(msg, _level)
-    if msg:match("unknown tree options") then
-      notified = true
-    end
-  end
+T["tree warns on unknown options and still invokes uv tree"] = function()
+  local spy = stub_uv_tree()
+  local captured = capture_notify()
+  create_project({
+    "[project]",
+    'dependencies = ["requests>=2"]',
+  })
 
-  commands.tree("--unknown requests", false, {})
+  require("pydeps.commands").tree("--unknown requests", false, {})
 
-  vim.notify = original_notify
-  MiniTest.expect.equality(notified, true)
-  MiniTest.expect.equality(output_called, true)
+  MiniTest.expect.equality(notified(captured, "unknown tree options: %-%-unknown"), true)
+  MiniTest.expect.equality(spy.runs[1].cmd, { "uv", "tree", "--frozen", "--package", "requests" })
+end
 
-  cleanup(dir)
-  package.loaded["pydeps.providers.uv"] = original_uv
-  package.loaded["pydeps.ui.output"] = original_output
+T["tree drops flags the installed uv does not support"] = function()
+  local spy = stub_uv_tree({ "--invert", "--package" })
+  local captured = capture_notify()
+  create_project({
+    "[project]",
+    'dependencies = ["requests>=2"]',
+  })
+
+  require("pydeps.commands").tree("--reverse requests --depth 1", false, {})
+
+  MiniTest.expect.equality(notified(captured, "%-%-invert not supported"), true)
+  -- Without --package the target is passed positionally.
+  MiniTest.expect.equality(spy.runs[1].cmd, { "uv", "tree", "--frozen", "requests", "--depth", "1" })
+end
+
+local PINNED_MTIME = 1700000000
+
+---@param dir string
+---@param version string
+local function write_lock_with_pinned_stat(dir, version)
+  local path = dir .. "/uv.lock"
+  helpers.create_uv_lock(dir, { requests = version })
+  -- Equal size and mtime across rewrites: only an explicit invalidation can
+  -- reveal the change to the lockfile cache.
+  vim.uv.fs_utime(path, PINNED_MTIME, PINNED_MTIME)
+end
+
+---@return { opts: table?, refresh_all: integer, diffs: table[] }
+local function stub_resolve_deps()
+  local spy = { refresh_all = 0, diffs = {} }
+  helpers.stub_module("pydeps.providers.uv", {
+    resolve = function(opts)
+      spy.opts = opts
+    end,
+  })
+  helpers.stub(require("pydeps.ui.lock_diff"), "show", function(before, after, opts)
+    table.insert(spy.diffs, { before = before, after = after, opts = opts })
+  end)
+  helpers.stub(require("pydeps.core.state"), "refresh_all", function()
+    spy.refresh_all = spy.refresh_all + 1
+  end)
+  return spy
+end
+
+T["resolve snapshots the lockfile, reloads it after uv lock and shows the diff"] = function()
+  local spy = stub_resolve_deps()
+  capture_notify()
+  local dir = create_project({ "[project]", 'dependencies = ["requests"]' }, { requests = "2.31.0" })
+  write_lock_with_pinned_stat(dir, "2.31.0")
+  local cache = require("pydeps.core.cache")
+  MiniTest.expect.equality(cache.get_lockfile(dir, { sync = true }).resolved.requests, "2.31.0")
+
+  vim.cmd("PyDepsResolve")
+
+  MiniTest.expect.equality(realpath(spy.opts.root), realpath(dir))
+  MiniTest.expect.equality(cache.get_lock_snapshot(dir), { requests = "2.31.0" })
+  MiniTest.expect.equality(spy.refresh_all, 0)
+
+  write_lock_with_pinned_stat(dir, "2.32.0")
+  spy.opts.on_finish({ ok = true, code = 0 })
+
+  MiniTest.expect.equality(#spy.diffs, 1)
+  MiniTest.expect.equality(spy.diffs[1].before, { requests = "2.31.0" })
+  MiniTest.expect.equality(spy.diffs[1].after, { requests = "2.32.0" })
+  MiniTest.expect.equality(cache.get_lock_snapshot(dir), { requests = "2.32.0" })
+  MiniTest.expect.equality(spy.refresh_all, 1)
+end
+
+T["resolve reports uv lock failures without touching the snapshot"] = function()
+  local spy = stub_resolve_deps()
+  local captured = capture_notify()
+  local dir = create_project({ "[project]", 'dependencies = ["requests"]' }, { requests = "2.31.0" })
+
+  require("pydeps.commands").resolve()
+  spy.opts.on_finish({ ok = false, code = 2, reason = "exit", stderr = "no solution" })
+
+  MiniTest.expect.equality(notified(captured, "uv lock failed %(exit code 2%)\nno solution"), true)
+  MiniTest.expect.equality(spy.diffs, {})
+  MiniTest.expect.equality(spy.refresh_all, 0)
+  MiniTest.expect.equality(require("pydeps.core.cache").get_lock_snapshot(dir), { requests = "2.31.0" })
+end
+
+T["resolve! shows the diff against the last snapshot without running uv"] = function()
+  local spy = stub_resolve_deps()
+  local captured = capture_notify()
+  local dir = create_project({ "[project]", 'dependencies = ["requests"]' }, { requests = "2.32.0" })
+
+  vim.cmd("PyDepsResolve!")
+  MiniTest.expect.equality(notified(captured, "no previous lockfile snapshot"), true)
+  MiniTest.expect.equality(spy.diffs, {})
+  MiniTest.expect.equality(spy.refresh_all, 1)
+
+  require("pydeps.core.cache").set_lock_snapshot(dir, { requests = "2.31.0" })
+  vim.cmd("PyDepsResolve!")
+
+  MiniTest.expect.equality(spy.opts, nil)
+  MiniTest.expect.equality(#spy.diffs, 1)
+  MiniTest.expect.equality(spy.diffs[1].before, { requests = "2.31.0" })
+  MiniTest.expect.equality(spy.diffs[1].after, { requests = "2.32.0" })
+  MiniTest.expect.equality(spy.refresh_all, 2)
 end
 
 return T

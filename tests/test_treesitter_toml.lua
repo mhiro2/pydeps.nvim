@@ -3,101 +3,95 @@ local helpers = require("tests.test_helpers")
 
 local T = helpers.create_test_set()
 
--- Check if Tree-sitter is available
-local function is_treesitter_available()
-  local ok, ts_toml = pcall(require, "pydeps.treesitter.toml")
-  if not ok then
-    return false
+-- `make test` builds the TOML parser, so a missing parser is a broken setup
+-- rather than a reason to skip.
+---@return table
+local function load_ts_toml()
+  local ts_toml = require("pydeps.treesitter.toml")
+  if not ts_toml.is_available() then
+    error("Tree-sitter toml parser is not available; run `make deps`", 2)
   end
-  return ts_toml.is_available()
+  return ts_toml
 end
 
-T["get_comment_col detects comment position"] = function()
-  if not is_treesitter_available() then
-    MiniTest.skip("Tree-sitter toml parser not available")
-    return
-  end
-
-  local ts_toml = require("pydeps.treesitter.toml")
-
+---@param lines string[]
+---@return integer
+local function toml_buffer(lines)
   local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
-    'dependencies = ["requests>=2.0"] # comment',
-    'other = "value"',
-  })
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
   vim.bo[bufnr].filetype = "toml"
-
-  local col = ts_toml.get_comment_col(bufnr, 0)
-  MiniTest.expect.equality(col, 34) -- Position of '#'
-
-  local col2 = ts_toml.get_comment_col(bufnr, 1)
-  MiniTest.expect.equality(col2, nil) -- No comment on line 2
-
-  vim.api.nvim_buf_delete(bufnr, { force = true })
+  return bufnr
 end
 
-T["parse_buffer extracts dependencies with Tree-sitter"] = function()
-  if not is_treesitter_available() then
-    MiniTest.skip("Tree-sitter toml parser not available")
-    return
-  end
-
-  local ts_toml = require("pydeps.treesitter.toml")
-
-  local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
+T["parse_buffer records string columns and trailing comment columns"] = function()
+  local ts_toml = load_ts_toml()
+  local bufnr = toml_buffer({
     "[project]",
     "dependencies = [",
-    '  "requests>=2.0", # core',
+    '  "requests>=2.0", # http client',
     '  "rich",',
+    '  "pkg @ https://example.com/pkg.whl#sha256=abc",',
+    '  "click>=8.0", # cli # framework',
     "]",
     "",
     "[project.optional-dependencies]",
-    'dev = ["pytest>=7", "ruff"]',
+    'dev = ["pytest>=7", "ruff"] # tools',
   })
-  vim.bo[bufnr].filetype = "toml"
 
   local deps = ts_toml.parse_buffer(bufnr)
+  local actual = {}
+  for _, dep in ipairs(deps) do
+    actual[#actual + 1] = { dep.name, dep.line, dep.col_start, dep.col_end, dep.comment_col or false }
+  end
 
-  MiniTest.expect.equality(#deps, 4)
+  MiniTest.expect.equality(actual, {
+    { "requests", 3, 3, 17, 20 },
+    { "rich", 4, 3, 8, false },
+    -- `#` inside the string is not a comment
+    { "pkg", 5, 3, 48, false },
+    -- the first `#` starts the comment
+    { "click", 6, 3, 14, 17 },
+    -- dependencies sharing a line share its comment
+    { "pytest", 10, 8, 18, 29 },
+    { "ruff", 10, 21, 26, 29 },
+  })
+end
 
-  -- Check first dependency
-  MiniTest.expect.equality(deps[1].name, "requests")
-  MiniTest.expect.equality(deps[1].spec, "requests>=2.0")
-  MiniTest.expect.equality(deps[1].line, 3)
-  MiniTest.expect.equality(deps[1].group, "project")
-  MiniTest.expect.no_equality(deps[1].comment_col, nil) -- Should detect comment
+T["parse_buffer decodes TOML escapes in the requirement"] = function()
+  local ts_toml = load_ts_toml()
+  local markers = require("pydeps.core.markers")
+  local bufnr = toml_buffer({
+    "[project]",
+    "dependencies = [",
+    '  "kernel; platform_version == \\"#3\\"",',
+    "  'win; os_name == \"nt\"',",
+    '  "uni\\u0063ode",',
+    "]",
+  })
 
-  -- Check second dependency
-  MiniTest.expect.equality(deps[2].name, "rich")
-  MiniTest.expect.equality(deps[2].line, 4)
-  MiniTest.expect.equality(deps[2].group, "project")
-
-  -- Check optional dependencies
-  MiniTest.expect.equality(deps[3].name, "pytest")
-  MiniTest.expect.equality(deps[3].group, "optional:dev")
-
-  MiniTest.expect.equality(deps[4].name, "ruff")
-  MiniTest.expect.equality(deps[4].group, "optional:dev")
-
-  vim.api.nvim_buf_delete(bufnr, { force = true })
+  local deps = ts_toml.parse_buffer(bufnr)
+  local actual = {}
+  for _, dep in ipairs(deps) do
+    actual[#actual + 1] = { dep.name, dep.spec, dep.literal }
+  end
+  MiniTest.expect.equality(actual, {
+    { "kernel", 'kernel; platform_version == "#3"', '"kernel; platform_version == \\"#3\\""' },
+    -- literal strings keep backslash-free text as written
+    { "win", 'win; os_name == "nt"', "'win; os_name == \"nt\"'" },
+    { "unicode", "unicode", '"uni\\u0063ode"' },
+  })
+  -- With the backslashes left in, the marker failed to parse.
+  local marker = require("pydeps.ui.shared").extract_marker(deps[1].spec)
+  MiniTest.expect.equality(markers.evaluate(marker, { platform_version = "#3" }), true)
 end
 
 T["parse_buffer handles dependency-groups"] = function()
-  if not is_treesitter_available() then
-    MiniTest.skip("Tree-sitter toml parser not available")
-    return
-  end
-
-  local ts_toml = require("pydeps.treesitter.toml")
-
-  local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
+  local ts_toml = load_ts_toml()
+  local bufnr = toml_buffer({
     "[dependency-groups]",
     'lint = ["ruff", "mypy"]',
     'test = ["pytest"]',
   })
-  vim.bo[bufnr].filetype = "toml"
 
   local deps = ts_toml.parse_buffer(bufnr)
 
@@ -111,74 +105,37 @@ T["parse_buffer handles dependency-groups"] = function()
 
   MiniTest.expect.equality(deps[3].name, "pytest")
   MiniTest.expect.equality(deps[3].group, "group:test")
-
-  vim.api.nvim_buf_delete(bufnr, { force = true })
 end
 
-T["parse_buffer comment_col matches get_comment_col"] = function()
-  if not is_treesitter_available() then
-    MiniTest.skip("Tree-sitter toml parser not available")
-    return
-  end
-
-  local ts_toml = require("pydeps.treesitter.toml")
-
-  local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
+T["get_dependency_array_ranges spans each dependency array"] = function()
+  local ts_toml = load_ts_toml()
+  local bufnr = toml_buffer({
     "[project]",
+    'name = "demo"',
     "dependencies = [",
-    '  "requests>=2.0", # http client',
-    '  "rich",',
-    '  "click>=8.0", # cli framework',
+    "  # pinned for CI",
+    '  "requests",',
     "]",
-  })
-  vim.bo[bufnr].filetype = "toml"
-
-  local deps = ts_toml.parse_buffer(bufnr)
-
-  -- requests (line 3, 0-indexed 2) has a comment
-  MiniTest.expect.equality(deps[1].name, "requests")
-  local expected1 = ts_toml.get_comment_col(bufnr, 2)
-  MiniTest.expect.equality(deps[1].comment_col, expected1)
-
-  -- rich (line 4, 0-indexed 3) has no comment
-  MiniTest.expect.equality(deps[2].name, "rich")
-  local expected2 = ts_toml.get_comment_col(bufnr, 3)
-  MiniTest.expect.equality(deps[2].comment_col, expected2)
-
-  -- click (line 5, 0-indexed 4) has a comment
-  MiniTest.expect.equality(deps[3].name, "click")
-  local expected3 = ts_toml.get_comment_col(bufnr, 4)
-  MiniTest.expect.equality(deps[3].comment_col, expected3)
-
-  vim.api.nvim_buf_delete(bufnr, { force = true })
-end
-
-T["get_section_ranges identifies table sections"] = function()
-  if not is_treesitter_available() then
-    MiniTest.skip("Tree-sitter toml parser not available")
-    return
-  end
-
-  local ts_toml = require("pydeps.treesitter.toml")
-
-  local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
-    "[project]",
-    "name = 'test'",
-    "dependencies = []",
     "",
     "[project.optional-dependencies]",
-    "dev = []",
+    'dev = ["pytest"]',
+    "docs = [",
+    '  "mkdocs",',
+    "]",
+    "",
+    "[dependency-groups]",
+    'lint = ["ruff"]',
+    "",
+    "[tool.other]",
+    'dependencies = ["ignored"]',
   })
-  vim.bo[bufnr].filetype = "toml"
 
-  local ranges = ts_toml.get_section_ranges(bufnr)
-
-  MiniTest.expect.no_equality(ranges["project"], nil)
-  MiniTest.expect.no_equality(ranges["project.optional-dependencies"], nil)
-
-  vim.api.nvim_buf_delete(bufnr, { force = true })
+  MiniTest.expect.equality(ts_toml.get_dependency_array_ranges(bufnr), {
+    project = { start_line = 3, end_line = 6 },
+    ["optional:dev"] = { start_line = 9, end_line = 9 },
+    ["optional:docs"] = { start_line = 10, end_line = 12 },
+    ["group:lint"] = { start_line = 15, end_line = 15 },
+  })
 end
 
 return T

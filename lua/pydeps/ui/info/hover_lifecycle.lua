@@ -292,7 +292,8 @@ local function render_hover(dep, resolved, opts, source_buf, window_opts)
       lockfile_loading = opts.lockfile_loading,
       meta = meta,
     })
-    local updated_lines = render_lines.build_lines(updated_view, opts)
+    local updated_lines =
+      render_lines.build_lines(updated_view, vim.tbl_extend("force", opts, { metadata_fetched = true }))
     local updated_status = render_lines.determine_status(updated_view)
     local new_width, new_height = hover_window_size(updated_lines)
 

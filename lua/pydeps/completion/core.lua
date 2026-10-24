@@ -242,14 +242,17 @@ function M.complete(bufnr, cursor, callback)
             unique(combined),
             ctx.range,
             completion_items.kinds.Module,
-            completion_items.package_source_meta(sources)
+            completion_items.with_typed_spelling(completion_items.package_source_meta(sources), search_prefix)
           ),
           isIncomplete = false,
         })
       end)
       return
     end
-    local meta = completion_items.uniform_meta(local_names, "package", "local")
+    local meta = completion_items.with_typed_spelling(
+      completion_items.uniform_meta(local_names, "package", "local"),
+      search_prefix
+    )
     callback({
       items = completion_items.as_items(local_names, ctx.range, completion_items.kinds.Module, meta),
       isIncomplete = false,

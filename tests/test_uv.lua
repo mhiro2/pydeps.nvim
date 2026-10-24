@@ -1,116 +1,112 @@
 local MiniTest = require("mini.test")
+local helpers = require("tests.test_helpers")
 
-local T = MiniTest.new_set({
+local JOB_ID = 5
+
+local T = helpers.new_set({
   hooks = {
     pre_case = function()
       package.loaded["pydeps.providers.uv"] = nil
-    end,
-    post_case = function()
-      package.loaded["pydeps.providers.uv"] = nil
+      require("pydeps.core.jobs")._reset()
+      local executable = vim.fn.executable
+      helpers.stub(vim.fn, "executable", function(cmd)
+        if cmd == "uv" then
+          return 1
+        end
+        return executable(cmd)
+      end)
     end,
   },
 })
 
-T["resolve returns success result"] = function()
-  local original_executable = vim.fn.executable
-  local original_jobstart = vim.fn.jobstart
-
-  vim.fn.executable = function(cmd)
-    if cmd == "uv" then
-      return 1
-    end
-    return original_executable(cmd)
-  end
-
-  vim.fn.jobstart = function(cmd, opts)
-    MiniTest.expect.equality(vim.deep_equal(cmd, { "uv", "lock" }), true)
+---@param on_start fun(opts: table)
+---@return { cmd: string[]?, cwd: string? }
+local function stub_jobstart(on_start)
+  local captured = {}
+  helpers.stub(vim.fn, "jobstart", function(cmd, opts)
+    captured.cmd, captured.cwd = cmd, opts.cwd
     vim.schedule(function()
-      opts.on_exit(nil, 0, nil)
+      on_start(opts)
     end)
-    return 1
-  end
+    return JOB_ID
+  end)
+  return captured
+end
 
-  local uv = require("pydeps.providers.uv")
+---@return PyDepsUvResolveResult
+local function resolve(root)
   local result = nil
-  uv.resolve({
-    root = "/tmp/project",
+  require("pydeps.providers.uv").resolve({
+    root = root,
     on_finish = function(value)
       result = value
     end,
   })
-
-  vim.wait(200, function()
+  helpers.wait_for(function()
     return result ~= nil
-  end, 10)
+  end, "uv.resolve result")
+  return result
+end
 
-  MiniTest.expect.equality(result.ok, true)
-  MiniTest.expect.equality(result.code, 0)
+---@return integer[]
+local function jobs_left_to_stop()
+  local stopped = {}
+  helpers.stub(vim.fn, "jobstop", function(id)
+    table.insert(stopped, id)
+    return 1
+  end)
+  local jobs = require("pydeps.core.jobs")
+  jobs.stop_all()
+  jobs._reset()
+  return stopped
+end
 
-  vim.fn.executable = original_executable
-  vim.fn.jobstart = original_jobstart
+T["resolve returns success result"] = function()
+  local captured = stub_jobstart(function(opts)
+    opts.on_exit(JOB_ID, 0, "exit")
+  end)
+
+  local result = resolve("/tmp/project")
+
+  MiniTest.expect.equality(result, { ok = true, code = 0 })
+  MiniTest.expect.equality(captured, { cmd = { "uv", "lock" }, cwd = "/tmp/project" })
+  MiniTest.expect.equality(jobs_left_to_stop(), {})
 end
 
 T["resolve returns stderr on failure"] = function()
-  local original_executable = vim.fn.executable
-  local original_jobstart = vim.fn.jobstart
+  stub_jobstart(function(opts)
+    opts.on_stderr(JOB_ID, { "lock failed" })
+    opts.on_exit(JOB_ID, 2, "exit")
+  end)
 
-  vim.fn.executable = function(cmd)
-    if cmd == "uv" then
-      return 1
-    end
-    return original_executable(cmd)
-  end
+  local result = resolve()
 
-  vim.fn.jobstart = function(_, opts)
-    vim.schedule(function()
-      opts.on_stderr(nil, { "lock failed" })
-      opts.on_exit(nil, 2, nil)
-    end)
-    return 1
-  end
+  MiniTest.expect.equality(result, { ok = false, reason = "exit", code = 2, stderr = "lock failed" })
+  MiniTest.expect.equality(jobs_left_to_stop(), {})
+end
 
-  local uv = require("pydeps.providers.uv")
-  local result = nil
-  uv.resolve({
-    on_finish = function(value)
-      result = value
-    end,
-  })
+T["resolve keeps its job tracked until it exits"] = function()
+  local running
+  stub_jobstart(function(opts)
+    running = opts
+  end)
+  require("pydeps.providers.uv").resolve({ root = "/tmp/project", on_finish = function() end })
+  helpers.wait_for(function()
+    return running ~= nil
+  end, "uv lock job start")
 
-  vim.wait(200, function()
-    return result ~= nil
-  end, 10)
-
-  MiniTest.expect.equality(result.ok, false)
-  MiniTest.expect.equality(result.reason, "exit")
-  MiniTest.expect.equality(result.code, 2)
-  MiniTest.expect.equality(result.stderr, "lock failed")
-
-  vim.fn.executable = original_executable
-  vim.fn.jobstart = original_jobstart
+  MiniTest.expect.equality(jobs_left_to_stop(), { JOB_ID })
+  running.on_exit(JOB_ID, 143, "exit")
 end
 
 T["tree_command returns explicit command payload"] = function()
-  local original_executable = vim.fn.executable
-
-  vim.fn.executable = function(cmd)
-    if cmd == "uv" then
-      return 1
-    end
-    return original_executable(cmd)
-  end
-
   local uv = require("pydeps.providers.uv")
   local command = uv.tree_command({
     root = "/tmp/project",
     args = { "tree", "--depth", "2" },
   })
 
-  MiniTest.expect.no_equality(command, nil)
-  MiniTest.expect.equality(vim.deep_equal(command.cmd, { "uv", "tree", "--depth", "2" }), true)
-  MiniTest.expect.equality(command.cwd, "/tmp/project")
-
-  vim.fn.executable = original_executable
+  MiniTest.expect.equality(command, { cmd = { "uv", "tree", "--depth", "2" }, cwd = "/tmp/project" })
 end
 
 return T

@@ -136,6 +136,18 @@ local function compare(a, b, include_local)
   return 0
 end
 
+---Order two concrete versions by PEP 440, including local labels.
+---@param a string
+---@param b string
+---@return integer? order -1, 0 or 1; nil when either version is invalid
+function M.compare(a, b)
+  local pa, pb = parse(a), parse(b)
+  if not pa or not pb then
+    return nil
+  end
+  return compare(pa, pb, true)
+end
+
 ---Apply a PEP 440 specifier to a concrete version, including prereleases.
 ---@return boolean? matched nil for an invalid version or specifier
 function M.matches(value, op, spec)

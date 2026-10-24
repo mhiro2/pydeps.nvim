@@ -7,25 +7,6 @@ local function package_named(data, name)
   return data.packages[data.by_name[name][1]]
 end
 
-T["parse uv.lock packages"] = function()
-  local lockfile = require("pydeps.sources.lockfile")
-  local path = helpers.write_temp_file({
-    "[[package]]",
-    'name = "requests"',
-    'version = "2.31.0"',
-    "",
-    "[[package]]",
-    'name = "rich"',
-    'version = "13.7.0"',
-  }, ".lock")
-
-  local resolved = lockfile.parse(path)
-  helpers.cleanup_temp_file(path)
-
-  MiniTest.expect.equality(resolved.requests, "2.31.0")
-  MiniTest.expect.equality(resolved.rich, "13.7.0")
-end
-
 T["parse uv.lock with metadata and subtables"] = function()
   local lockfile = require("pydeps.sources.lockfile")
   local path = helpers.write_temp_file({
@@ -50,12 +31,10 @@ T["parse uv.lock with metadata and subtables"] = function()
     'version = "0.1"',
   }, ".lock")
 
-  local resolved = lockfile.parse(path)
+  local resolved = lockfile.parse_full(path).resolved
   helpers.cleanup_temp_file(path)
 
-  MiniTest.expect.equality(resolved.requests, "2.32.3")
-  MiniTest.expect.equality(resolved.rich, "13.7.1")
-  MiniTest.expect.equality(resolved.ignore, nil)
+  MiniTest.expect.equality(resolved, { requests = "2.32.3", rich = "13.7.1" })
 end
 
 T["parse uv.lock dependencies"] = function()
@@ -112,6 +91,150 @@ T["parse uv.lock - boundary conditions"] = function()
   MiniTest.expect.equality(next(result_comments.packages), nil)
 end
 
+---@return table[] messages
+local function capture_notify()
+  local messages = {}
+  helpers.stub(vim, "notify_once", function(msg, level)
+    messages[#messages + 1] = { msg = msg, level = level }
+  end)
+  return messages
+end
+
+---@param lines string[]
+---@return string path
+local function unreadable_lock(lines)
+  local path = helpers.write_temp_file(lines, ".lock")
+  vim.fn.setfperm(path, "---------")
+  helpers.defer(function()
+    helpers.cleanup_temp_file(path)
+  end)
+  return path
+end
+
+T["parse_full reports a lockfile it cannot open"] = function()
+  local lockfile = require("pydeps.sources.lockfile")
+  local messages = capture_notify()
+
+  MiniTest.expect.equality(lockfile.parse_full("/non/existent/path/uv.lock").resolved, {})
+  helpers.drain(20)
+  MiniTest.expect.equality(messages, {})
+
+  local path = unreadable_lock({ "[[package]]", 'name = "requests"', 'version = "1.0"' })
+  MiniTest.expect.equality(lockfile.parse_full(path).resolved, {})
+  helpers.wait_for(function()
+    return #messages > 0
+  end, "lockfile read failure notification")
+  MiniTest.expect.equality(messages[1].level, vim.log.levels.ERROR)
+  MiniTest.expect.equality(messages[1].msg:find(path, 1, true) ~= nil, true)
+
+  -- A directory without search permission hides the file from fs_stat too.
+  local dir = vim.fn.tempname()
+  vim.fn.mkdir(dir, "p")
+  vim.fn.writefile({ "version = 1" }, dir .. "/uv.lock")
+  vim.fn.setfperm(dir, "rw-------")
+  helpers.defer(function()
+    vim.fn.setfperm(dir, "rwx------")
+    vim.fn.delete(dir, "rf")
+  end)
+  MiniTest.expect.equality(lockfile.parse_full(dir .. "/uv.lock").resolved, {})
+  helpers.wait_for(function()
+    return #messages > 1
+  end, "notification for a lockfile behind an unsearchable directory")
+  MiniTest.expect.equality(messages[2].msg:find(dir, 1, true) ~= nil, true)
+end
+
+---@param path string
+---@return { data: PyDepsLockfileData?, err: string? }
+local function parse_async_result(path)
+  local result
+  require("pydeps.sources.lockfile").parse_async(path, function(data, err)
+    result = { data = data, err = err }
+  end)
+  helpers.wait_for(function()
+    return result ~= nil
+  end, "parse_async callback")
+  return result
+end
+
+---@return table<integer, integer> opened fd -> close count
+local function track_file_descriptors()
+  local uv = vim.uv
+  local opened = {}
+  local original_open, original_close = uv.fs_open, uv.fs_close
+  helpers.stub(uv, "fs_open", function(path, flags, mode, cb)
+    return original_open(path, flags, mode, function(err, fd)
+      if fd then
+        opened[fd] = 0
+      end
+      cb(err, fd)
+    end)
+  end)
+  helpers.stub(uv, "fs_close", function(fd, ...)
+    if opened[fd] then
+      opened[fd] = opened[fd] + 1
+    end
+    return original_close(fd, ...)
+  end)
+  return opened
+end
+
+---@param opened table<integer, integer>
+local function expect_all_closed_once(opened)
+  MiniTest.expect.equality(vim.tbl_count(opened) > 0, true)
+  for fd, closes in pairs(opened) do
+    MiniTest.expect.equality({ fd = fd, closes = closes }, { fd = fd, closes = 1 })
+    opened[fd] = nil
+  end
+end
+
+T["parse_async reports open failures without a missing-file notification"] = function()
+  local messages = capture_notify()
+
+  local missing = parse_async_result("/non/existent/path/uv.lock")
+  MiniTest.expect.equality(missing.data, nil)
+  MiniTest.expect.equality(vim.startswith(missing.err, "ENOENT"), true)
+
+  local path = unreadable_lock({ "[[package]]", 'name = "requests"', 'version = "1.0"' })
+  local denied = parse_async_result(path)
+  MiniTest.expect.equality(denied.data, nil)
+  MiniTest.expect.equality(vim.startswith(denied.err, "EACCES"), true)
+  helpers.wait_for(function()
+    return #messages > 0
+  end, "lockfile read failure notification")
+  MiniTest.expect.equality(#messages, 1)
+  MiniTest.expect.equality(messages[1].msg:find(path, 1, true) ~= nil, true)
+end
+
+T["parse_async closes the file on empty, stat and read failures"] = function()
+  local uv = vim.uv
+  local path = helpers.write_temp_file({ "[[package]]", 'name = "requests"', 'version = "1.0"' }, ".lock")
+  local empty_path = helpers.write_temp_file({}, ".lock")
+  helpers.defer(function()
+    helpers.cleanup_temp_file(path)
+    helpers.cleanup_temp_file(empty_path)
+  end)
+
+  local opened = track_file_descriptors()
+  local empty = parse_async_result(empty_path)
+  MiniTest.expect.equality(empty.data.packages, {})
+  MiniTest.expect.equality(empty.data.resolved, {})
+  expect_all_closed_once(opened)
+
+  local original_fstat = uv.fs_fstat
+  helpers.stub(uv, "fs_fstat", function(_, cb)
+    cb("EBADF: bad file descriptor")
+  end)
+  MiniTest.expect.equality(parse_async_result(path), { err = "EBADF: bad file descriptor" })
+  expect_all_closed_once(opened)
+  uv.fs_fstat = original_fstat
+
+  helpers.stub(uv, "fs_read", function(_, _, _, cb)
+    cb("EIO: i/o error")
+  end)
+  MiniTest.expect.equality(parse_async_result(path), { err = "EIO: i/o error" })
+  expect_all_closed_once(opened)
+end
+
 T["parse uv.lock - malformed toml"] = function()
   local lockfile = require("pydeps.sources.lockfile")
 
@@ -124,7 +247,7 @@ T["parse uv.lock - malformed toml"] = function()
   helpers.cleanup_temp_file(no_name_path)
   MiniTest.expect.equality(next(result_no_name.resolved), nil)
 
-  -- package without version
+  -- package without version: kept as an identity, but never resolved
   local no_version_path = helpers.write_temp_file({
     "[[package]]",
     'name = "requests"',
@@ -132,6 +255,8 @@ T["parse uv.lock - malformed toml"] = function()
   local result_no_version = lockfile.parse_full(no_version_path)
   helpers.cleanup_temp_file(no_version_path)
   MiniTest.expect.equality(next(result_no_version.resolved), nil)
+  MiniTest.expect.equality(#result_no_version.by_name.requests, 1)
+  MiniTest.expect.equality(package_named(result_no_version, "requests").version, nil)
 
   -- package with empty dependencies array
   local empty_deps_path = helpers.write_temp_file({
@@ -155,8 +280,9 @@ T["parse uv.lock - malformed toml"] = function()
   }, ".lock")
   local result_unclosed = lockfile.parse_full(unclosed_path)
   helpers.cleanup_temp_file(unclosed_path)
-  -- should parse the package and dependencies found
+  -- the package survives; the array never closes, so its entries are dropped
   MiniTest.expect.equality(result_unclosed.resolved.requests, "2.32.3")
+  MiniTest.expect.equality(package_named(result_unclosed, "requests").dependencies, {})
 end
 
 T["parse uv.lock - special characters"] = function()
@@ -170,7 +296,7 @@ T["parse uv.lock - special characters"] = function()
   }, ".lock")
   local result_special_name = lockfile.parse_full(special_name_path)
   helpers.cleanup_temp_file(special_name_path)
-  MiniTest.expect.equality(result_special_name.resolved["my_awesome-package"], "1.0.0")
+  MiniTest.expect.equality(result_special_name.resolved["my-awesome-package"], "1.0.0")
 end
 
 T["universal forks preserve identities and project only a known environment"] = function()

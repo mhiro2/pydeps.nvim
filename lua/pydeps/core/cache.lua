@@ -91,7 +91,7 @@ function M.get_pyproject(bufnr)
 
   -- Parse and cache fresh data
   local path = vim.api.nvim_buf_get_name(bufnr)
-  local deps = pyproject.parse(path, nil, bufnr)
+  local deps = pyproject.parse(path, bufnr)
   buf_cache[bufnr] = { tick = tick, deps = deps }
 
   return deps
