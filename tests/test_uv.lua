@@ -85,6 +85,32 @@ T["resolve returns stderr on failure"] = function()
   MiniTest.expect.equality(jobs_left_to_stop(), {})
 end
 
+T["resolve passes extra arguments and keeps uv's report on success"] = function()
+  local captured = stub_jobstart(function(opts)
+    opts.on_stderr(JOB_ID, { "Resolved 3 packages", "Update requests v2.31.0 -> v2.32.3", "" })
+    opts.on_exit(JOB_ID, 0, "exit")
+  end)
+
+  local result = nil
+  require("pydeps.providers.uv").resolve({
+    root = "/tmp/project",
+    args = { "--dry-run", "--upgrade-package", "requests" },
+    on_finish = function(value)
+      result = value
+    end,
+  })
+  helpers.wait_for(function()
+    return result ~= nil
+  end, "uv.resolve result")
+
+  MiniTest.expect.equality(captured.cmd, { "uv", "lock", "--dry-run", "--upgrade-package", "requests" })
+  MiniTest.expect.equality(result, {
+    ok = true,
+    code = 0,
+    stderr = "Resolved 3 packages\nUpdate requests v2.31.0 -> v2.32.3",
+  })
+end
+
 T["resolve reports a timeout from the main loop and stops the job"] = function()
   stub_jobstart(function() end)
   local stopped = {}

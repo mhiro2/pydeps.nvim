@@ -113,4 +113,43 @@ T["show returns the selected item on numeric keypress"] = function()
   MiniTest.expect.equality(win_count, 1)
 end
 
+T["show renders the header and item details around the choices"] = function()
+  local select_menu = require("pydeps.ui.select_menu")
+  local original_getchar = vim.fn.getchar
+  local lines
+  vim.fn.getchar = function()
+    lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+    return 113 -- 'q'
+  end
+
+  local called = false
+  select_menu.show({
+    prompt = "update requests",
+    header = { "locked    2.31.0" },
+    items = {
+      { label = "2.31.0 -> 2.32.3", details = { "~ requests 2.31.0 -> 2.32.3" }, value = 1 },
+      { label = "2.31.0 -> 3.0.0", value = 2 },
+    },
+    on_select = function()
+      called = true
+    end,
+  })
+  vim.wait(500, function()
+    return called
+  end, 10)
+  vim.fn.getchar = original_getchar
+
+  MiniTest.expect.equality(lines, {
+    "pydeps: update requests",
+    "",
+    "  locked    2.31.0",
+    "",
+    "1: 2.31.0 -> 2.32.3",
+    "     ~ requests 2.31.0 -> 2.32.3",
+    "2: 2.31.0 -> 3.0.0",
+    "",
+    "Type number (1-2) or q to cancel",
+  })
+end
+
 return T

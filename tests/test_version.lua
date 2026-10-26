@@ -84,4 +84,29 @@ T["invalid versions and specifiers remain undetermined"] = function()
   end
 end
 
+T["specifier sets apply every clause and reject unreadable ones"] = function()
+  MiniTest.expect.equality(version.parse_specifiers(">= 2, <3,!=2.1.*"), {
+    { op = ">=", version = "2" },
+    { op = "<", version = "3" },
+    { op = "!=", version = "2.1.*" },
+  })
+  MiniTest.expect.equality(version.parse_specifiers(""), {})
+  MiniTest.expect.equality(version.parse_specifiers(">=2,latest"), nil)
+
+  MiniTest.expect.equality(version.satisfies("2.5", ">=2,<3,!=2.1.*"), true)
+  MiniTest.expect.equality(version.satisfies("2.1.4", ">=2,<3,!=2.1.*"), false)
+  MiniTest.expect.equality(version.satisfies("3.0", ">=2,<3"), false)
+  MiniTest.expect.equality(version.satisfies("2.5", ""), true)
+  MiniTest.expect.equality(version.satisfies("2.5", ">=2,~=3"), nil)
+end
+
+T["prerelease and release segments"] = function()
+  MiniTest.expect.equality(version.is_prerelease("2.0rc1"), true)
+  MiniTest.expect.equality(version.is_prerelease("2.0.dev3"), true)
+  MiniTest.expect.equality(version.is_prerelease("2.0.post1"), false)
+  MiniTest.expect.equality(version.is_prerelease("latest"), nil)
+  MiniTest.expect.equality(version.release("1!2.3.4+local"), { 2, 3, 4 })
+  MiniTest.expect.equality(version.release("latest"), nil)
+end
+
 return T

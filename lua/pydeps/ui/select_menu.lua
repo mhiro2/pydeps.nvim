@@ -5,9 +5,11 @@ local M = {}
 ---@class PyDepsSelectOption
 ---@field label string
 ---@field value any
+---@field details? string[] Lines shown under the label
 
 ---@class PyDepsSelectOpts
 ---@field prompt string
+---@field header? string[] Lines shown between the prompt and the items
 ---@field items PyDepsSelectOption[]
 ---@field on_select fun(choice: any|nil)
 
@@ -24,15 +26,26 @@ end
 ---Format menu lines with proper spacing
 ---@param prompt string
 ---@param items PyDepsSelectOption[]
+---@param header? string[]
 ---@return string[]
-local function format_menu_lines(prompt, items)
+local function format_menu_lines(prompt, items, header)
   local lines = {
     "pydeps: " .. prompt,
     "",
   }
 
+  if header and #header > 0 then
+    for _, line in ipairs(header) do
+      table.insert(lines, "  " .. line)
+    end
+    table.insert(lines, "")
+  end
+
   for i, item in ipairs(items) do
     table.insert(lines, string.format("%d: %s", i, item.label))
+    for _, detail in ipairs(item.details or {}) do
+      table.insert(lines, "     " .. detail)
+    end
   end
 
   table.insert(lines, "")
@@ -114,15 +127,15 @@ function M.show(opts)
     return
   end
 
-  local lines = format_menu_lines(opts.prompt, opts.items)
+  local lines = format_menu_lines(opts.prompt, opts.items, opts.header)
 
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].modifiable = false
 
-  local width = max_width(lines) + 4
-  local height = #lines
+  local width = math.max(1, math.min(max_width(lines) + 4, vim.o.columns - 4))
+  local height = math.max(1, math.min(#lines, vim.o.lines - 4))
 
   local win = vim.api.nvim_open_win(buf, true, {
     relative = config.options.select_menu_relative or "cursor",

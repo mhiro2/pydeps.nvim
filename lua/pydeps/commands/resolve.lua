@@ -42,6 +42,51 @@ local function resolve_message(result)
   return message, vim.log.levels.ERROR
 end
 
+---Run uv lock, then show what it changed in uv.lock and refresh open buffers.
+---@param root string
+---@param opts? { args?: string[], on_finish?: fun(ok: boolean) }
+---@return nil
+function M.lock(root, opts)
+  opts = opts or {}
+  local function done(ok)
+    if opts.on_finish then
+      opts.on_finish(ok)
+    end
+  end
+
+  local before = cache.get_lockfile(root, { sync = true })
+  cache.set_lock_snapshot(root, lockfile.snapshot(before))
+
+  local uv = require("pydeps.providers.uv")
+  local cmd = { "uv", "lock" }
+  vim.list_extend(cmd, opts.args or {})
+  vim.notify("pydeps: running " .. table.concat(cmd, " "), vim.log.levels.INFO)
+  uv.resolve({
+    root = root,
+    args = opts.args,
+    on_finish = function(result)
+      if not result.ok then
+        local message, level = resolve_message(result)
+        vim.notify(message, level)
+        done(false)
+        return
+      end
+
+      vim.notify("pydeps: uv lock succeeded", vim.log.levels.INFO)
+      cache.invalidate_lockfile(root)
+      local after, missing = cache.get_lockfile(root, { sync = true })
+      if missing then
+        vim.notify("pydeps: uv.lock not found after resolve", vim.log.levels.WARN)
+      else
+        lock_diff.show(lockfile.snapshot(before), lockfile.snapshot(after), { title = "PyDeps Lock Diff", root = root })
+        cache.set_lock_snapshot(root, lockfile.snapshot(after))
+      end
+      state.refresh_all()
+      done(true)
+    end,
+  })
+end
+
 ---@param opts? { diff_only?: boolean, root?: string }
 ---@return nil
 function M.run(opts)
@@ -58,32 +103,7 @@ function M.run(opts)
     return
   end
 
-  local before = cache.get_lockfile(root, { sync = true })
-  cache.set_lock_snapshot(root, lockfile.snapshot(before))
-
-  local uv = require("pydeps.providers.uv")
-  vim.notify("pydeps: running uv lock", vim.log.levels.INFO)
-  uv.resolve({
-    root = root,
-    on_finish = function(result)
-      if not result.ok then
-        local message, level = resolve_message(result)
-        vim.notify(message, level)
-        return
-      end
-
-      vim.notify("pydeps: uv lock succeeded", vim.log.levels.INFO)
-      cache.invalidate_lockfile(root)
-      local after, missing = cache.get_lockfile(root, { sync = true })
-      if missing then
-        vim.notify("pydeps: uv.lock not found after resolve", vim.log.levels.WARN)
-      else
-        lock_diff.show(lockfile.snapshot(before), lockfile.snapshot(after), { title = "PyDeps Lock Diff", root = root })
-        cache.set_lock_snapshot(root, lockfile.snapshot(after))
-      end
-      state.refresh_all()
-    end,
-  })
+  M.lock(root)
 end
 
 return M

@@ -264,8 +264,14 @@ require("blink.cmp").setup({
 ## 💻 Commands
 
 - `:PyDepsToggle` — toggle inline badges and diagnostics
-- `:PyDepsUpdate [package]` — update dependency under cursor (or named package)
-  - Cancelled if the buffer changes while metadata is loading; retry on the current contents
+- `:PyDepsUpdate [package]` — plan an update for the dependency under cursor (or named package) and apply the candidate you pick
+  - Runs `uv lock --dry-run --upgrade-package` alongside a PyPI lookup, then lists in one menu:
+    - the version uv resolves while keeping the declaration, with the lock changes it plans
+    - the newest release inside the declared range when uv resolves an older one (locked with `--upgrade-package name==version`)
+    - the newest release outside the range for the project's `requires-python`, with the rewritten declaration
+  - Picking a candidate runs `uv lock` and shows the lockfile diff; a declaration change is saved first and restored if uv cannot lock it
+  - Notes explain releases left out, such as a latest version requiring a newer Python or a failed dry run
+  - `pyproject.toml` must be saved first, and the update is cancelled if the buffer changes before a candidate is picked
   - The package name prompt applies to the buffer that asked, not the current one
 - `:PyDepsResolve` — resolve dependencies via `uv` and show lockfile diff
   - `:PyDepsResolve!` shows diff only (no lock)
