@@ -385,7 +385,7 @@ local function stub_uv_tree(unsupported)
     on_exit({ code = 0, stdout = tree_help(unsupported), stderr = "" })
   end)
   helpers.stub(require("pydeps.ui.output"), "run_command", function(cmd, opts)
-    table.insert(spy.runs, { cmd = cmd, cwd = opts.cwd })
+    table.insert(spy.runs, { cmd = cmd, cwd = opts.cwd, on_exit = opts.on_exit })
   end)
   local uv = require("pydeps.providers.uv")
   uv._clear_tree_features_cache()
@@ -459,6 +459,55 @@ T["tree drops flags the installed uv does not support"] = function()
   MiniTest.expect.equality(notified(captured, "%-%-invert not supported"), true)
   -- Without --package the target is passed positionally.
   MiniTest.expect.equality(spy.runs[1].cmd, { "uv", "tree", "--frozen", "requests", "--depth", "1" })
+end
+
+T["tree warns when uv cannot run frozen"] = function()
+  local spy = stub_uv_tree({ "--frozen" })
+  local captured = capture_notify()
+  create_project({
+    "[project]",
+    'dependencies = ["requests>=2"]',
+  })
+
+  require("pydeps.commands").tree("requests", false, {})
+
+  MiniTest.expect.equality(notified(captured, "%-%-frozen not supported"), true)
+  MiniTest.expect.equality(vim.tbl_contains(captured.levels, vim.log.levels.WARN), true)
+  MiniTest.expect.equality(spy.runs[1].cmd, { "uv", "tree", "--package", "requests" })
+  MiniTest.expect.equality(type(spy.runs[1].on_exit), "function")
+end
+
+T["tree reports uv.lock rewritten by a resolving run"] = function()
+  local spy = stub_uv_tree()
+  local dir = create_project({
+    "[project]",
+    'dependencies = ["requests>=2"]',
+  }, { requests = "2.31.0" })
+  local refreshed = 0
+  helpers.stub(require("pydeps.core.state"), "refresh_all", function()
+    refreshed = refreshed + 1
+  end)
+  local captured = capture_notify()
+
+  vim.cmd("PyDepsTree")
+  MiniTest.expect.equality(spy.runs[1].on_exit, nil)
+
+  vim.cmd("PyDepsTree --resolve")
+  spy.runs[2].on_exit(0)
+  MiniTest.expect.equality(notified(captured, "updated uv.lock"), false)
+  MiniTest.expect.equality(refreshed, 0)
+
+  vim.cmd("PyDepsTree --resolve")
+  helpers.create_uv_lock(dir, { requests = "2.32.10" })
+  spy.runs[3].on_exit(0)
+  MiniTest.expect.equality(notified(captured, "uv tree updated uv.lock"), true)
+  MiniTest.expect.equality(refreshed, 1)
+
+  vim.fn.delete(dir .. "/uv.lock")
+  vim.cmd("PyDepsTree --resolve")
+  helpers.create_uv_lock(dir, { requests = "2.32.10" })
+  spy.runs[4].on_exit(0)
+  MiniTest.expect.equality(refreshed, 2)
 end
 
 local PINNED_MTIME = 1700000000

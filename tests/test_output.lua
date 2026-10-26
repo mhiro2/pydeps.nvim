@@ -105,4 +105,39 @@ T["output run_command: collects stderr chunks for error message"] = function()
   MiniTest.expect.equality(jobs_left_to_stop(), {})
 end
 
+T["output run_command: reports the exit code whether or not the command succeeded"] = function()
+  package.loaded["pydeps.ui.output"] = nil
+  local output = require("pydeps.ui.output")
+  helpers.stub(output, "show", function() end)
+  helpers.stub(vim, "notify", function() end)
+  local exit_code = nil
+  stub_jobstart(function(opts)
+    opts.on_exit(JOB_ID, 0)
+  end)
+
+  output.run_command({ "dummy" }, {
+    on_exit = function(code)
+      exit_code = code
+    end,
+  })
+  helpers.wait_for(function()
+    return exit_code ~= nil
+  end, "exit callback")
+  MiniTest.expect.equality(exit_code, 0)
+
+  exit_code = nil
+  stub_jobstart(function(opts)
+    opts.on_exit(JOB_ID, 2)
+  end)
+  output.run_command({ "dummy" }, {
+    on_exit = function(code)
+      exit_code = code
+    end,
+  })
+  helpers.wait_for(function()
+    return exit_code ~= nil
+  end, "exit callback")
+  MiniTest.expect.equality(exit_code, 2)
+end
+
 return T

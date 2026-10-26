@@ -276,7 +276,8 @@ require("blink.cmp").setup({
   - A failed request retains its error during the 60-second retry backoff
   - CVSS vectors are preserved in the report; without a numeric score or a recognized database severity, their severity is UNKNOWN. GitHub's MODERATE level ranks with MEDIUM
 - `:PyDepsTree` — show dependency tree (uses `--frozen` by default)
-  - `:PyDepsTree --resolve` skips frozen mode and attempts dependency resolution
+  - `:PyDepsTree --resolve` skips frozen mode and attempts dependency resolution; this may update `uv.lock`, which is reported and refreshes open buffers
+  - If the installed `uv` does not support `--frozen`, a warning is shown and the tree runs without it
 
 Run `:checkhealth pydeps` to verify your setup.
 

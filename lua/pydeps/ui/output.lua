@@ -214,6 +214,7 @@ end
 ---@field width? integer
 ---@field height? integer
 ---@field width_calc? fun(lines: string[]):integer
+---@field on_exit? fun(code: integer)
 
 ---@param cmd string[]
 ---@param opts PyDepsOutputOptions
@@ -238,6 +239,9 @@ function M.run_command(cmd, opts)
     end,
     on_exit = function(self_id, code)
       jobs.untrack(self_id)
+      if opts.on_exit then
+        opts.on_exit(code)
+      end
       if code ~= 0 then
         local message = "pydeps: command failed"
         if #stderr > 0 then
