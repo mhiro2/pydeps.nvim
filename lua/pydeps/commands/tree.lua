@@ -29,8 +29,12 @@ local function build_tree_args(tree_args, target)
   local uv = require("pydeps.providers.uv")
   local uv_args = { "tree" }
 
-  if tree_args.frozen and uv.supports_tree_flag("frozen") then
-    vim.list_extend(uv_args, { "--frozen" })
+  if tree_args.frozen then
+    if uv.supports_tree_flag("frozen") then
+      vim.list_extend(uv_args, { "--frozen" })
+    else
+      vim.notify("pydeps: --frozen not supported by this uv version; uv tree may update uv.lock", vim.log.levels.WARN)
+    end
   end
   if target then
     add_if_supported("package", uv_args, { "--package", target }, { target })
@@ -106,6 +110,32 @@ local function resolve_target(bufnr, tree_args, args_str, opts)
   return target
 end
 
+---@param path string
+---@return string?
+local function lock_signature(path)
+  local stat = vim.uv.fs_stat(path)
+  if not stat then
+    return nil
+  end
+  return string.format("%d:%d:%d", stat.mtime.sec, stat.mtime.nsec or 0, stat.size)
+end
+
+-- Without --frozen, uv tree re-locks the project and may rewrite uv.lock.
+-- Report such a rewrite and refresh buffers so it does not go unnoticed.
+---@param root string
+---@return fun(code: integer)
+local function watch_lockfile(root)
+  local path = vim.fs.joinpath(root, "uv.lock")
+  local before = lock_signature(path)
+  return function()
+    if lock_signature(path) == before then
+      return
+    end
+    vim.notify("pydeps: uv tree updated uv.lock", vim.log.levels.INFO)
+    require("pydeps.core.state").refresh_all()
+  end
+end
+
 ---@param root string
 ---@param uv_args string[]
 ---@param opts? { anchor?: "center"|"cursor"|"hover", mode?: "split"|"float", width?: integer, height?: integer }
@@ -127,8 +157,14 @@ local function show_tree(root, uv_args, opts)
     width_calc = build_width_calc(root)
   end
 
+  local on_exit = nil
+  if not vim.tbl_contains(uv_args, "--frozen") then
+    on_exit = watch_lockfile(root)
+  end
+
   output.run_command(command.cmd, {
     cwd = command.cwd,
+    on_exit = on_exit,
     title = "PyDeps Tree",
     anchor = opts and opts.anchor,
     mode = opts and opts.mode,

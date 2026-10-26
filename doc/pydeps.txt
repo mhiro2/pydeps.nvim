@@ -164,11 +164,17 @@ pydeps.setup({opts})                                           *pydeps.setup()*
 
     By default, runs with `--frozen` flag, which uses the existing lockfile
     without attempting dependency resolution. This allows viewing the tree
-    even when some dependencies are unresolved or unavailable.
+    even when some dependencies are unresolved or unavailable. If the
+    installed uv does not support `--frozen`, a warning is shown and the tree
+    runs without it.
 
     Options:~
       --resolve           Skip frozen mode and attempt dependency resolution.
                           Use this when you want uv to resolve dependencies.
+                          uv may update uv.lock in this mode; if it does,
+                          a notification is shown and open buffers are
+                          refreshed. Use |:PyDepsResolve| to review the
+                          lockfile diff instead.
       --package {name}    Show tree for a specific package.
       --depth {n}         Limit tree depth.
       --reverse           Show reverse dependencies (what depends on this).
