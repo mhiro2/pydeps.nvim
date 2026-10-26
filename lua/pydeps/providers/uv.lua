@@ -111,18 +111,20 @@ function M.resolve(opts)
 
   -- Set up timeout timer
   timer = uv.new_timer()
+  -- Report from the main loop: callers touch buffers, which a libuv
+  -- callback is not allowed to do.
   timer:start(UV_LOCK_TIMEOUT, 0, function()
-    if completed then
-      return
-    end
     vim.schedule(function()
+      if completed then
+        return
+      end
+      finish({
+        ok = false,
+        code = -1,
+        reason = "timeout",
+      })
       vim.fn.jobstop(job_id)
     end)
-    finish({
-      ok = false,
-      code = -1,
-      reason = "timeout",
-    })
   end)
 end
 
