@@ -118,34 +118,16 @@ T["resolve reports a timeout from the main loop and stops the job"] = function()
     table.insert(stopped, id)
     return 1
   end)
-  local new_timer = vim.uv.new_timer
-  local expire
-  helpers.stub(vim.uv, "new_timer", function()
-    return {
-      start = function(_, _, _, cb)
-        expire = cb
-      end,
-      stop = function() end,
-      close = function() end,
-      is_closing = function()
-        return false
-      end,
-    }
-  end)
 
   local result, lines
   require("pydeps.providers.uv").resolve({
+    timeout = 1,
     on_finish = function(value)
       -- Buffer APIs raise inside libuv callbacks, so this proves the context.
       lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
       result = value
     end,
   })
-  local trigger = new_timer()
-  trigger:start(0, 0, function()
-    trigger:close()
-    expire()
-  end)
   helpers.wait_for(function()
     return result ~= nil
   end, "uv.resolve timeout")

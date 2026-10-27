@@ -1,6 +1,7 @@
 ---@class PyDepsUvResolveOptions
 ---@field root? string
 ---@field args? string[] Extra arguments for `uv lock`
+---@field timeout? integer Milliseconds before uv is stopped (default: 5 minutes)
 ---@field on_finish? fun(result: PyDepsUvResolveResult)
 
 ---@class PyDepsUvResolveResult
@@ -112,7 +113,7 @@ function M.resolve(opts)
   timer = uv.new_timer()
   -- Report from the main loop: callers touch buffers, which a libuv
   -- callback is not allowed to do.
-  timer:start(UV_LOCK_TIMEOUT, 0, function()
+  timer:start(opts.timeout or UV_LOCK_TIMEOUT, 0, function()
     vim.schedule(function()
       if completed then
         return
