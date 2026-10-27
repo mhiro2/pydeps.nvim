@@ -74,6 +74,9 @@ local function handle_input(winid, items, callback)
       return
     end
 
+    -- getchar blocks without redrawing, so a menu opened from a callback
+    -- would stay invisible while it waits for the choice.
+    vim.cmd("redraw")
     -- getchar raises on interrupt (e.g. <C-c>); treat it as a cancel.
     local ok, char = pcall(vim.fn.getchar)
     if not ok then

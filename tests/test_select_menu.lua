@@ -113,6 +113,24 @@ T["show returns the selected item on numeric keypress"] = function()
   MiniTest.expect.equality(win_count, 1)
 end
 
+T["show draws the menu before waiting for a key"] = function()
+  local original_cmd = vim.cmd
+  local redrawn = false
+  vim.cmd = function(command)
+    redrawn = redrawn or command == "redraw"
+    return original_cmd(command)
+  end
+  local drawn_before_key
+  local ok, called = pcall(show_with_getchar, function()
+    drawn_before_key = redrawn
+    return 113 -- 'q'
+  end)
+  vim.cmd = original_cmd
+
+  MiniTest.expect.equality({ ok, called }, { true, true })
+  MiniTest.expect.equality(drawn_before_key, true)
+end
+
 T["show renders the header and item details around the choices"] = function()
   local select_menu = require("pydeps.ui.select_menu")
   local original_getchar = vim.fn.getchar
