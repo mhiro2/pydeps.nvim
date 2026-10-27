@@ -18,6 +18,9 @@ local HELP_STDOUT = table.concat({
   "      --group <GROUP>        Include dependencies from the specified dependency group",
   "      --no-group <NO_GROUP>  Disable the specified dependency group",
   "      --all-groups           Include dependencies from all dependency groups",
+  "      --no-default-groups    Ignore the default dependency groups",
+  "      --python-version <PYTHON_VERSION>",
+  "      --python-platform <PYTHON_PLATFORM>",
 }, "\n")
 
 ---@param opts? { uv_available?: boolean }
@@ -88,6 +91,9 @@ T["feature detection parses uv tree --help and runs it once"] = function()
     no_group = true,
     package = true,
     frozen = true,
+    python_version = true,
+    python_platform = true,
+    no_default_groups = true,
   }
   MiniTest.expect.equality(received[1], expected)
   MiniTest.expect.equality(received[2], expected)

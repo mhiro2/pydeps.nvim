@@ -22,10 +22,35 @@ local function add_if_supported(flag_name, uv_args, primary_args, fallback_args)
   return false
 end
 
+-- Filter the tree for the shared context unless the command asks for the
+-- universal tree or picks groups itself.
+---@param tree_args PyDepsTreeArgs
+---@param overrides PyDepsContextOverrides
+---@param uv_args string[]
+local function add_context_args(tree_args, overrides, uv_args)
+  if tree_args.universal then
+    return
+  end
+  if overrides.python then
+    add_if_supported("python_version", uv_args, { "--python-version", overrides.python })
+  end
+  if overrides.platform then
+    add_if_supported("python_platform", uv_args, { "--python-platform", overrides.platform })
+  end
+  if overrides.groups and not tree_args.all_groups and #tree_args.groups == 0 and #tree_args.no_groups == 0 then
+    if add_if_supported("no_default_groups", uv_args, { "--no-default-groups" }) then
+      for _, group in ipairs(overrides.groups) do
+        add_if_supported("group", uv_args, { "--group", group })
+      end
+    end
+  end
+end
+
 ---@param tree_args PyDepsTreeArgs
 ---@param target? string
+---@param overrides PyDepsContextOverrides
 ---@return string[]
-local function build_tree_args(tree_args, target)
+local function build_tree_args(tree_args, target, overrides)
   local uv = require("pydeps.providers.uv")
   local uv_args = { "tree" }
 
@@ -65,6 +90,8 @@ local function build_tree_args(tree_args, target)
       break
     end
   end
+
+  add_context_args(tree_args, overrides, uv_args)
 
   return uv_args
 end
@@ -221,7 +248,7 @@ function M.run(args_str, bang, opts)
     return
   end
 
-  show_tree(root, build_tree_args(tree_args, target), opts)
+  show_tree(root, build_tree_args(tree_args, target, require("pydeps.core.context").overrides(root)), opts)
 end
 
 return M

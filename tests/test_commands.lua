@@ -248,6 +248,9 @@ local function tree_help(unsupported)
     "--all-groups",
     "--group",
     "--no-group",
+    "--no-default-groups",
+    "--python-version",
+    "--python-platform",
   }
   local lines = { "Usage: uv tree [OPTIONS]" }
   for _, flag in ipairs(flags) do
@@ -317,6 +320,50 @@ T["tree passes parsed options to uv tree"] = function()
     spy.runs = {}
     vim.cmd(case.cmd)
     MiniTest.expect.equality(#spy.runs, 1)
+    MiniTest.expect.equality(spy.runs[1].cmd, vim.list_extend({ "uv", "tree" }, case.args))
+    MiniTest.expect.equality(realpath(spy.runs[1].cwd), realpath(dir))
+  end
+end
+
+T["tree filters for the shared context unless the command chooses itself"] = function()
+  local dir = create_project({
+    "[project]",
+    'dependencies = ["requests>=2"]',
+    "",
+    "[dependency-groups]",
+    'test = ["pytest>=8"]',
+  })
+  local context = require("pydeps.core.context")
+  helpers.defer(context._clear)
+  local root = require("pydeps.core.buffer_context").find_root(vim.api.nvim_get_current_buf())
+  context.set(root, "python", "3.11")
+  context.set(root, "platform", "linux")
+  context.set(root, "groups", { "test" })
+  local spy = stub_uv_tree()
+
+  local cases = {
+    {
+      cmd = "PyDepsTree",
+      args = {
+        "--frozen",
+        "--python-version",
+        "3.11",
+        "--python-platform",
+        "linux",
+        "--no-default-groups",
+        "--group",
+        "test",
+      },
+    },
+    { cmd = "PyDepsTree --universal", args = { "--frozen", "--universal" } },
+    {
+      cmd = "PyDepsTree --group dev",
+      args = { "--frozen", "--group", "dev", "--python-version", "3.11", "--python-platform", "linux" },
+    },
+  }
+  for _, case in ipairs(cases) do
+    spy.runs = {}
+    vim.cmd(case.cmd)
     MiniTest.expect.equality(spy.runs[1].cmd, vim.list_extend({ "uv", "tree" }, case.args))
     MiniTest.expect.equality(realpath(spy.runs[1].cwd), realpath(dir))
   end

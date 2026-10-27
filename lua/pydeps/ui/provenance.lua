@@ -62,15 +62,20 @@ end
 ---@param root_labels table<string, string>
 ---@param reachable table<string, boolean>
 ---@param graph table<string, string[]>
+---@param opts PyDepsProvenanceOptions
 ---@return string[]
-local function build_lines(target, roots, root_labels, reachable, graph)
+local function build_lines(target, roots, root_labels, reachable, graph, opts)
   local lines = { "Target: " .. target }
+  if opts.context then
+    table.insert(lines, "Context: " .. opts.context)
+  end
   local direct_label = root_labels[target]
+  local inactive = direct_label and not vim.tbl_contains(roots, target) and ", inactive" or ""
   if direct_label then
     if direct_label ~= "project" then
-      table.insert(lines, ("Direct: yes (%s)"):format(direct_label))
+      table.insert(lines, ("Direct: yes (%s%s)"):format(direct_label, inactive))
     else
-      table.insert(lines, "Direct: yes")
+      table.insert(lines, ("Direct: yes%s"):format(inactive ~= "" and " (inactive)" or ""))
     end
   else
     table.insert(lines, "Direct: no")
@@ -140,14 +145,21 @@ local function build_lines(target, roots, root_labels, reachable, graph)
   return lines
 end
 
+---@class PyDepsProvenanceOptions
+---@field active_deps? PyDepsDependency[] Declared dependencies the context keeps; defaults to all of `deps`
+---@field context? string Description of the context the graph was projected for
+
 ---@param target string
 ---@param deps PyDepsDependency[]
 ---@param graph table<string, string[]>
+---@param opts? PyDepsProvenanceOptions
 ---@return boolean?, string?
-function M.show(target, deps, graph)
-  local roots, root_labels = collect_roots(deps)
+function M.show(target, deps, graph, opts)
+  opts = opts or {}
+  local _, root_labels = collect_roots(deps)
+  local roots = collect_roots(opts.active_deps or deps)
   local reachable = provenance.roots_reaching_target(graph, roots, target)
-  local lines = build_lines(target, roots, root_labels, reachable, graph)
+  local lines = build_lines(target, roots, root_labels, reachable, graph, opts)
 
   info.suspend_close()
   local ok, err = pcall(output.show, "PyDeps Why: " .. target, lines, {

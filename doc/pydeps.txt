@@ -34,7 +34,10 @@ Key Features:
     the dependency to an unknown state; while the environment is still
     being read the marker stays pending and the locked version is still
     shown. group/dependency_group are pydeps extensions. extras and
-    dependency_groups require an explicit lock marker evaluation context.
+    dependency_groups are known once |:PyDepsContext| selects extras or
+    groups.
+  • Shared environment context (|:PyDepsContext|): one Python, platform,
+    extras, and groups selection for badges, Info, Why, and Tree
   • Direct integration with uv (lock, tree)
   • Dependency tree inspection ("why is this installed?")
   • Lockfile diff view (before/after resolve)
@@ -42,8 +45,9 @@ Key Features:
   • Completion for packages, versions, extras, and groups
 
 Universal lockfiles preserve every name/version/source identity and their
-conditional edges. Inline versions are projected with the detected
-environment's markers; ambiguous forks stay unresolved. This is a view of a
+conditional edges. Inline versions are projected with the environment
+context's markers (the detected environment unless |:PyDepsContext|
+overrides it); ambiguous forks stay unresolved. This is a view of a
 resolution, not of the installed environment, and the audit covers all locked
 versions. Optional provenance edges require their extra or group to be
 selected.
@@ -153,6 +157,50 @@ pydeps.setup({opts})                                           *pydeps.setup()*
     Show transitive dependency provenance ("why is this installed?").
     If [package] is not provided and cursor is on a dependency, uses that
     dependency. Otherwise prompts for a package name.
+    Only declared dependencies active in the |:PyDepsContext| context are
+    followed as roots. When the context has overrides, it is shown in the
+    window.
+
+:PyDepsContext [field] [value...]                             *:PyDepsContext*
+    Show or change the environment context of the current project. Badges,
+    diagnostics, |:PyDepsInfo|, |:PyDepsWhy|, and |:PyDepsTree| all
+    evaluate markers and project uv.lock with it. Without overrides it is
+    the detected Python environment with every extra and group selected.
+    Without arguments, opens a menu listing each field, its value, and
+    whether it is detected or overridden.
+
+    Fields:~
+      python {version}     Python to evaluate markers for, e.g. `3.11` or
+                           `3.11.9`. Like uv, a version without a patch is
+                           read as its first patch release (`3.11.0`).
+      platform {target}    A uv `--python-platform` target: `linux`,
+                           `macos`, `windows`, or a triple such as
+                           `aarch64-unknown-linux-gnu`. Sets sys_platform,
+                           platform_system, os_name, and platform_machine;
+                           platform_release and platform_version become
+                           unknown.
+      extras {names}       Extras from [project.optional-dependencies].
+      groups {names}       Groups from [dependency-groups]. A group's
+                           `include-group` members are selected with it.
+      reset [field]        Drop every override, or only [field].
+
+    Names may be separated by spaces or commas. `all` stops filtering and
+    `none` selects nothing. Unknown names are rejected.
+
+    Dependencies outside the selected extras or groups, or whose marker is
+    false, are shown as inactive. |:PyDepsInfo| explains why, for example:
+      sys_platform == "win32" is false (sys_platform is "darwin")
+    The context describes the lock's selection; it does not check that
+    wheels exist for the target platform.
+    Changing the context refreshes open buffers and fires the User
+    autocommand `PyDepsContextChanged` with `{ root = ... }` as data.
+
+    Examples:~
+      :PyDepsContext python 3.11
+      :PyDepsContext platform linux
+      :PyDepsContext groups test
+      :PyDepsContext extras none
+      :PyDepsContext reset platform
 
 :PyDepsInfo                                                      *:PyDepsInfo*
     Show detailed information about the dependency under cursor:
@@ -162,6 +210,8 @@ pydeps.setup({opts})                                           *pydeps.setup()*
       • lock: Whether lock is up-to-date or out-of-date
       • markers: PEP 508 marker expression (if present)
       • group/extra: Dependency group or extra (if present)
+      • status: Why the dependency is inactive, when it is
+      • context: The |:PyDepsContext| context, when it has overrides
 
 :PyDepsAudit                                                    *:PyDepsAudit*
     Audit every distinct name/version in the universal uv.lock against OSV,
@@ -212,6 +262,11 @@ pydeps.setup({opts})                                           *pydeps.setup()*
     If uv.lock is missing and frozen mode is active, a warning is shown
     suggesting to run :PyDepsResolve or use --resolve flag.
 
+    |:PyDepsContext| overrides are passed as `--python-version`,
+    `--python-platform`, and `--no-default-groups --group {name}`.
+    `--universal` skips them, and explicit group options replace the
+    context's groups. `uv tree` has no extras filter.
+
 ==============================================================================
 6. CONFIGURATION                                                *pydeps-config*
 
@@ -253,6 +308,7 @@ ui                                 (table)
           latest = "",
           extras = "",
           markers = "󰍶",
+          context = "",
           status = "",
           deps = "",
           pypi = "󰌠",

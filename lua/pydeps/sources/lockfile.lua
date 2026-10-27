@@ -55,6 +55,16 @@ local function marker_active(expressions, env)
   return false
 end
 
+-- The project at the lock's root; its extras and groups are what a context selects.
+local function is_project_package(pkg)
+  return pkg.source and (pkg.source.editable == "." or pkg.source.virtual == ".")
+end
+
+-- An unset selection leaves every extra or group of the project enabled.
+local function selects(selection, name)
+  return selection == nil or vim.tbl_contains(selection, util.normalize_package_name(name))
+end
+
 local function compute_projection(data, env)
   local selected, resolved, ambiguous = {}, {}, {}
   local candidates = {}
@@ -83,10 +93,21 @@ local function compute_projection(data, env)
       for _, child in ipairs(graph[name]) do
         seen[child] = true
       end
-      for _, edge in ipairs(data.packages[id].dependencies or {}) do
+      local pkg = data.packages[id]
+      local is_project = is_project_package(pkg)
+      for _, edge in ipairs(pkg.dependencies or {}) do
         local enabled = edge.kind == "runtime"
-          or (edge.kind == "optional" and (edge.group == env.extra or (extras[name] and extras[name][edge.group])))
-          or (edge.kind == "dev" and edge.group == (env.dependency_group or env.group))
+          or (edge.kind == "optional" and (edge.group == env.extra or (extras[name] and extras[name][edge.group]) or (is_project and selects(
+            env.extras,
+            edge.group
+          ))))
+          or (
+            edge.kind == "dev"
+            and (
+              edge.group == (env.dependency_group or env.group)
+              or (is_project and selects(env.dependency_groups, edge.group))
+            )
+          )
         local child = selected[edge.name] and data.packages[selected[edge.name]]
         if
           enabled

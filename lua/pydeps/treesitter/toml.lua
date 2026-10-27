@@ -257,6 +257,65 @@ function M.parse_buffer(bufnr)
   return deps
 end
 
+---Value of an inline table's `include-group` key, decoded from its string literal.
+---@param bufnr integer
+---@param inline_table table Tree-sitter node
+---@return string|nil
+local function included_group(bufnr, inline_table)
+  for pair in inline_table:iter_children() do
+    if pair:type() == "pair" then
+      local key_node, value_node = find_key_node(pair), nil
+      for child in pair:iter_children() do
+        if child:type() == "string" then
+          value_node = child
+        end
+      end
+      if key_node and value_node and vim.treesitter.get_node_text(key_node, bufnr) == "include-group" then
+        local value = lock_value.parse(vim.treesitter.get_node_text(value_node, bufnr))
+        return type(value) == "string" and value or nil
+      end
+    end
+  end
+  return nil
+end
+
+---@class PyDepsSelectableSections
+---@field extras string[] Optional dependency names in declaration order
+---@field groups string[] Dependency group names in declaration order
+---@field includes table<string, string[]> Groups each dependency group includes via `include-group`
+
+---Collect the extras and dependency groups a project declares, including empty ones.
+---@param bufnr integer
+---@return PyDepsSelectableSections
+function M.parse_sections(bufnr)
+  local result = { extras = {}, groups = {}, includes = {} }
+  local parser = get_parser(bufnr)
+  local tree = parser and parser:parse()[1]
+  if not tree then
+    return result
+  end
+
+  each_dependency_array(bufnr, tree:root(), function(section, array_node)
+    local extra = section:match("^optional:(.+)$")
+    local group = section:match("^group:(.+)$")
+    if extra then
+      table.insert(result.extras, extra)
+    elseif group then
+      table.insert(result.groups, group)
+      local includes = {}
+      for child in array_node:iter_children() do
+        local included = child:type() == "inline_table" and included_group(bufnr, child)
+        if included then
+          table.insert(includes, included)
+        end
+      end
+      result.includes[group] = includes
+    end
+  end)
+
+  return result
+end
+
 ---Get dependency array ranges (dependencies / optional-dependencies / dependency-groups)
 ---@param bufnr integer
 ---@return table<string, {start_line: integer, end_line: integer}> ranges

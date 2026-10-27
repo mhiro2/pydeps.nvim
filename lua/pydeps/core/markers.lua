@@ -247,6 +247,63 @@ local function evaluate(node, env)
   return nil, "invalid"
 end
 
+---@param token { kind: string, value: string }
+---@return string
+local function format_operand(token)
+  if token.kind == "ident" then
+    return token.value
+  end
+  return token.value:find('"', 1, true) and ("'" .. token.value .. "'") or ('"' .. token.value .. '"')
+end
+
+---@param value any
+---@return string
+local function format_value(value)
+  if type(value) == "table" then
+    return "[" .. table.concat(vim.tbl_map(tostring, value), ", ") .. "]"
+  end
+  return '"' .. tostring(value) .. '"'
+end
+
+---Collect the comparisons that make `node` false.
+---@param node table
+---@param env table<string, any>
+---@param out string[]
+local function explain_false(node, env, out)
+  if node.op == "and" or node.op == "or" then
+    for _, child in ipairs({ node.left, node.right }) do
+      if evaluate(child, env) == false then
+        explain_false(child, env, out)
+      end
+    end
+    return
+  end
+  local variable = node.left.kind == "ident" and node.left or node.right
+  out[#out + 1] = string.format(
+    "%s %s %s is false (%s is %s)",
+    format_operand(node.left),
+    node.op,
+    format_operand(node.right),
+    variable.value,
+    format_value(env[variable.value])
+  )
+end
+
+---Explain why a marker evaluates to false, one line per deciding comparison
+---with the environment value it was checked against.
+---@param marker? string
+---@param env? table<string, any>
+---@return string[]
+function M.explain(marker, env)
+  env = env or {}
+  if M.evaluate(marker, env) ~= false then
+    return {}
+  end
+  local out = {}
+  explain_false((parse(marker)), env, out)
+  return out
+end
+
 ---Names of the marker fields the evaluator understands.
 ---@return string[]
 function M.field_names()

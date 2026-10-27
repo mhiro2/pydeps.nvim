@@ -408,4 +408,61 @@ T["projections are reused per lock data and environment"] = function()
   MiniTest.expect.equality(lockfile.project(reparsed, { sys_platform = "linux" }) == linux, false)
 end
 
+T["projections enable the project's extras and groups the context selects"] = function()
+  local lockfile = require("pydeps.sources.lockfile")
+  local data = lockfile.parse_full(helpers.write_temp_file({
+    "version = 1",
+    "",
+    "[[package]]",
+    'name = "app"',
+    'version = "0.1.0"',
+    'source = { editable = "." }',
+    'dependencies = [{ name = "base" }]',
+    "",
+    "[package.optional-dependencies]",
+    'postgres = [{ name = "orm", extra = ["asyncio"] }]',
+    "",
+    "[package.dev-dependencies]",
+    'test = [{ name = "pytest" }]',
+    "",
+    "[[package]]",
+    'name = "base"',
+    'version = "1.0"',
+    'source = { registry = "https://pypi.org/simple" }',
+    "",
+    "[[package]]",
+    'name = "orm"',
+    'version = "2.0"',
+    'source = { registry = "https://pypi.org/simple" }',
+    "",
+    "[package.optional-dependencies]",
+    'asyncio = [{ name = "greenlet" }]',
+    'other = [{ name = "base" }]',
+    "",
+    "[[package]]",
+    'name = "greenlet"',
+    'version = "3.0"',
+    'source = { registry = "https://pypi.org/simple" }',
+    "",
+    "[[package]]",
+    'name = "pytest"',
+    'version = "8.0"',
+    'source = { registry = "https://pypi.org/simple" }',
+  }, ".lock"))
+
+  -- Unfiltered, every extra and group of the project is followed, but other
+  -- packages only enable the extras someone requests.
+  local all = lockfile.project(data, {})
+  MiniTest.expect.equality(all.graph.app, { "base", "orm", "pytest" })
+  MiniTest.expect.equality(all.graph.orm, { "greenlet" })
+
+  local none = lockfile.project(data, { extras = {}, dependency_groups = {} })
+  MiniTest.expect.equality(none.graph.app, { "base" })
+  MiniTest.expect.equality(none.graph.orm, {})
+
+  local selected = lockfile.project(data, { extras = { "postgres" }, dependency_groups = { "test" } })
+  MiniTest.expect.equality(selected.graph.app, { "base", "orm", "pytest" })
+  MiniTest.expect.equality(selected.graph.orm, { "greenlet" })
+end
+
 return T

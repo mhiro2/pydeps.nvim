@@ -48,6 +48,7 @@ pydeps.nvim brings the **crates.nvim workflow to Python** with a focus on what w
 - 🔒 **Lockfile-first view**: show **resolved** versions from `uv.lock`
 - 🧭 **Why-installed tracing**: understand **dependency provenance**
 - 🧪 **PEP 508 aware**: markers for Python version, platform, extras, and groups
+- 🎛️ **Shared environment context**: pick the Python, platform, extras, and groups that badges, Info, Why, and Tree all evaluate
 - 🧩 **Inline badges**: section-aligned, comment-aware UI with icons & highlights
 - ⚡ **Review-first resolve**: `uv lock` + lockfile diff before committing
 - 🧰 **Mismatch detection**: pin vs resolved version + yanked checks on PyPI
@@ -59,10 +60,11 @@ releases (`~=`), wildcards, and arbitrary equality (`===`). Invalid markers and 
 fields are reported and drop the dependency to an unknown state; while the environment
 is still being read the marker stays pending and the locked version is still shown.
 `group` and `dependency_group` are pydeps extensions. Lock marker sets (`extras`,
-`dependency_groups`) require an explicit evaluation context.
+`dependency_groups`) are only known once `:PyDepsContext` selects extras or groups.
 
 Universal lockfiles retain every name/version/source identity. Inline versions are
-projected using the detected Python environment; ambiguous forks remain unresolved
+projected using the environment context (the detected Python environment unless
+`:PyDepsContext` overrides it); ambiguous forks remain unresolved
 until their markers can select one identity. This is a lockfile view, not a report
 of packages already installed. Audits cover all locked versions regardless of the
 current environment. Conditional dependency edges retain versions, sources, markers,
@@ -130,6 +132,7 @@ pydeps.nvim is configurable via `require("pydeps").setup({ ... })`.
       latest = "",
       extras = "",
       markers = "󰍶",
+      context = "",
       status = "",
       deps = "",
       pypi = "󰌠",
@@ -276,6 +279,15 @@ require("blink.cmp").setup({
 - `:PyDepsResolve` — resolve dependencies via `uv` and show lockfile diff
   - `:PyDepsResolve!` shows diff only (no lock)
 - `:PyDepsWhy [package]` — show transitive provenance for dependency
+  - Only declared dependencies active in the current context are followed as roots
+- `:PyDepsContext [field] [value...]` — show or change the environment context shared by badges, diagnostics, Info, Why, and Tree
+  - Without arguments, opens a menu listing each field and whether it is detected or overridden
+  - `python 3.11` evaluates markers for that Python; like uv, a version without a patch is read as its first patch release (`3.11.0`)
+  - `platform linux` evaluates markers for a uv `--python-platform` target (`linux`, `macos`, `windows`, or a triple such as `aarch64-unknown-linux-gnu`)
+  - `extras postgres` / `groups dev,test` select extras and dependency groups; `all` stops filtering and `none` selects nothing. Groups include their `include-group` members
+  - `reset [field]` drops every override or one field
+  - Dependencies outside the selection, or whose marker is false, are shown as inactive; Info explains why, e.g. `sys_platform == "win32" is false (sys_platform is "darwin")`
+  - The context is a view of the lock's selection, not a check that wheels exist for the target platform
 - `:PyDepsInfo` — inspect dependency under cursor
 - `:PyDepsAudit` — audit every distinct locked name/version against OSV, including all universal resolution forks
   - Failed and unscanned packages are listed separately, never counted as clean scans
@@ -284,6 +296,7 @@ require("blink.cmp").setup({
 - `:PyDepsTree` — show dependency tree (uses `--frozen` by default)
   - `:PyDepsTree --resolve` skips frozen mode and attempts dependency resolution; this may update `uv.lock`, which is reported and refreshes open buffers
   - If the installed `uv` does not support `--frozen`, a warning is shown and the tree runs without it
+  - Context overrides are passed as `--python-version`, `--python-platform`, and `--no-default-groups --group ...`; `--universal` or explicit group options take precedence. `uv tree` has no extras filter
 
 Run `:checkhealth pydeps` to verify your setup.
 

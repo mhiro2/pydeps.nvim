@@ -1,4 +1,5 @@
 local audit = require("pydeps.commands.audit")
+local context = require("pydeps.commands.context")
 local info = require("pydeps.commands.info")
 local provenance = require("pydeps.commands.provenance")
 local resolve = require("pydeps.commands.resolve")
@@ -14,4 +15,6 @@ return {
   info = info.run,
   audit = audit.run,
   toggle = toggle.run,
+  context = context.run,
+  complete_context = context.complete,
 }

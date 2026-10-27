@@ -1,5 +1,6 @@
 local config = require("pydeps.config")
-local env = require("pydeps.core.env")
+local context = require("pydeps.core.context")
+local markers = require("pydeps.core.markers")
 local ui_shared = require("pydeps.ui.shared")
 local status = require("pydeps.ui.status")
 
@@ -21,6 +22,7 @@ local M = {}
 ---@field lockfile_loading boolean
 ---@field unresolved boolean
 ---@field active boolean?
+---@field inactive_reasons string[] Why the context leaves the dependency out
 ---@field marker_status? "invalid"|"unknown"|"pending"
 ---@field yanked boolean
 ---@field class? "ok"|"update"|"major"|"inactive"|"yanked"|"lock_mismatch"|"pin_not_found"|"searching"|"loading"|"unknown"
@@ -108,7 +110,7 @@ function M.build(dep, opts)
   opts = opts or {}
   local pypi_provider = get_pypi()
 
-  local current_env = opts.current_env or env.get(opts.root)
+  local current_env = opts.current_env or context.env(opts.root)
   local resolved = opts.resolved_version
   if resolved == nil and opts.resolved then
     resolved = opts.resolved[dep.name]
@@ -129,6 +131,11 @@ function M.build(dep, opts)
   local unresolved = resolved == nil and meta ~= nil and not lockfile_missing and not lockfile_loading
   local marker = ui_shared.extract_marker(dep.spec)
   local active, marker_status = status.is_active(dep, current_env)
+  local inactive_reasons = {}
+  if active == false then
+    local excluded = context.excluded_reason(dep, current_env)
+    inactive_reasons = excluded and { excluded } or markers.explain(marker, ui_shared.with_extra_env(current_env, dep))
+  end
 
   local yanked = opts.yanked
   if yanked == nil then
@@ -179,6 +186,7 @@ function M.build(dep, opts)
     lockfile_loading = lockfile_loading,
     unresolved = unresolved,
     active = active,
+    inactive_reasons = inactive_reasons,
     marker_status = marker_status,
     yanked = yanked,
     class = classified.class,

@@ -288,7 +288,7 @@ function M.refresh(bufnr, opts)
   -- Get dependency data
   local deps = buffer_context.get_deps(bufnr)
   local lock_data, missing_lockfile, lockfile_loading = cache.get_lockfile(root)
-  local projection = lockfile.project(lock_data, require("pydeps.core.env").get(root))
+  local projection = lockfile.project(lock_data, require("pydeps.core.context").env(root))
   local resolved = projection.resolved
 
   -- Notify about missing lockfile (once per root)

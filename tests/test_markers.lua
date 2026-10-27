@@ -165,4 +165,29 @@ T["boolean expressions preserve pending values and require valid whole syntax"] 
   )
 end
 
+T["explain names the comparisons that make a marker false with their current values"] = function()
+  local current = { sys_platform = "darwin", python_version = "3.13", extras = { "docs" } }
+  MiniTest.expect.equality(
+    markers.explain("sys_platform == 'win32'", current),
+    { 'sys_platform == "win32" is false (sys_platform is "darwin")' }
+  )
+  -- Only the false side of a conjunction decides it; a disjunction needs both.
+  MiniTest.expect.equality(
+    markers.explain("python_version >= '3.9' and sys_platform == 'linux'", current),
+    { 'sys_platform == "linux" is false (sys_platform is "darwin")' }
+  )
+  MiniTest.expect.equality(markers.explain("sys_platform == 'linux' or python_version < '3.10'", current), {
+    'sys_platform == "linux" is false (sys_platform is "darwin")',
+    'python_version < "3.10" is false (python_version is "3.13")',
+  })
+  MiniTest.expect.equality(
+    markers.explain("'cli' in extras", current),
+    { '"cli" in extras is false (extras is [docs])' }
+  )
+  -- True, pending and invalid markers have nothing to explain.
+  MiniTest.expect.equality(markers.explain("sys_platform == 'darwin'", current), {})
+  MiniTest.expect.equality(markers.explain("platform_machine == 'x86_64'", current), {})
+  MiniTest.expect.equality(markers.explain("sys_platform ==", current), {})
+end
+
 return T

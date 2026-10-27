@@ -138,4 +138,24 @@ T["get_dependency_array_ranges spans each dependency array"] = function()
   })
 end
 
+T["parse_sections lists extras, groups and included groups"] = function()
+  local ts_toml = load_ts_toml()
+  local bufnr = toml_buffer({
+    "[project.optional-dependencies]",
+    'postgres = ["psycopg"]',
+    "empty = []",
+    "",
+    "[dependency-groups]",
+    'test = ["pytest"]',
+    'ci = [{ include-group = "test" }, "coverage", { include-group = "lint" }]',
+    "lint = []",
+  })
+
+  MiniTest.expect.equality(ts_toml.parse_sections(bufnr), {
+    extras = { "postgres", "empty" },
+    groups = { "test", "ci", "lint" },
+    includes = { test = {}, ci = { "test", "lint" }, lint = {} },
+  })
+end
+
 return T
