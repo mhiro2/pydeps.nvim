@@ -116,14 +116,33 @@ pydeps.setup({opts})                                           *pydeps.setup()*
     command.
 
 :PyDepsUpdate [package]                                        *:PyDepsUpdate*
-    Update a dependency to the latest PyPI version.
+    Plan an update for a dependency and apply the candidate you pick.
       - If [package] is omitted and cursor is on a dependency, updates it.
       - If [package] is provided, updates that package.
       - If not on a dependency, prompts for a package name.
-    The update is cancelled if the buffer changes while the metadata is
-    loading. Retry the command on the current contents. The package name
-    prompt applies to the buffer that asked for the update, not to
-    whichever buffer is current when the name is entered.
+    pydeps runs `uv lock --dry-run --upgrade-package {name}` and fetches
+    PyPI metadata, then shows one menu with the candidates and what each
+    changes:
+      - The version uv resolves while keeping the declaration, with the
+        lock changes uv plans for it.
+      - The newest release inside the declared range, when uv resolves an
+        older one. It is locked with `--upgrade-package {name}=={version}`,
+        so uv reports which requirement holds it back if it cannot.
+      - The newest release outside the declared range that supports the
+        lowest Python in `requires-python`, with the rewritten declaration.
+        Lower bounds move to the release and upper bounds move just past
+        it at their written precision (`>=2,<3` becomes `>=3.1.0,<4`).
+    Yanked releases and prereleases are not offered. Notes in the menu
+    explain what was left out, such as a latest release that needs a newer
+    Python or a dry run uv could not resolve.
+    Picking a candidate runs `uv lock` and shows the lockfile diff. A
+    declaration change is written to pyproject.toml before locking and
+    restored if uv cannot lock it.
+    pyproject.toml must be saved before planning, since uv reads the file
+    on disk. The update is cancelled if the buffer changes before a
+    candidate is picked. The package name prompt applies to the buffer
+    that asked for the update, not to whichever buffer is current when the
+    name is entered.
 
 :PyDepsResolve                                                *:PyDepsResolve*
     Run `uv lock` to resolve dependencies. Shows a lockfile diff after
@@ -313,10 +332,10 @@ info_window_border                  (string, default: "rounded")
     Border style for info window (see |nvim_open_win()|).
 
 select_menu_border                  (string, default: "rounded")
-    Border style for select menu window.
+    Border style for the |:PyDepsUpdate| candidate menu.
 
 select_menu_relative                (string, default: "cursor")
-    Relative position for select menu window.
+    Relative position for the |:PyDepsUpdate| candidate menu.
 
 audit_window_border                 (string, default: "rounded")
     Border style for audit report window.

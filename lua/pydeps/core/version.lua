@@ -213,4 +213,54 @@ function M.matches(value, op, spec)
   return nil
 end
 
+---Split a PEP 440 specifier set such as `>=2,<3` into its clauses.
+---@param spec string
+---@return { op: string, version: string }[]? clauses nil when a clause cannot be read
+function M.parse_specifiers(spec)
+  local clauses = {}
+  for part in spec:gmatch("[^,]+") do
+    local op, value = part:match("^%s*([<>=!~]=?=?)%s*(%S+)%s*$")
+    if not op then
+      return nil
+    end
+    table.insert(clauses, { op = op, version = value })
+  end
+  return clauses
+end
+
+---Check a concrete version against every clause of a specifier set.
+---@param value string
+---@param spec string
+---@return boolean? satisfied nil for an invalid version or specifier
+function M.satisfies(value, spec)
+  local clauses = M.parse_specifiers(spec)
+  if not clauses then
+    return nil
+  end
+  for _, clause in ipairs(clauses) do
+    local matched = M.matches(value, clause.op, clause.version)
+    if not matched then
+      return matched
+    end
+  end
+  return true
+end
+
+---@param value string
+---@return boolean? prerelease nil for an invalid version
+function M.is_prerelease(value)
+  local parsed = parse(value)
+  if not parsed then
+    return nil
+  end
+  return parsed.pre ~= nil or parsed.dev ~= nil
+end
+
+---@param value string
+---@return integer[]? release numeric release segments, nil for an invalid version
+function M.release(value)
+  local parsed = parse(value)
+  return parsed and parsed.release
+end
+
 return M

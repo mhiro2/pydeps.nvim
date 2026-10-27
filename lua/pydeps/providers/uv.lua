@@ -1,12 +1,14 @@
 ---@class PyDepsUvResolveOptions
 ---@field root? string
+---@field args? string[] Extra arguments for `uv lock`
+---@field timeout? integer Milliseconds before uv is stopped (default: 5 minutes)
 ---@field on_finish? fun(result: PyDepsUvResolveResult)
 
 ---@class PyDepsUvResolveResult
 ---@field ok boolean
 ---@field code integer
 ---@field reason? "missing_uv"|"spawn"|"timeout"|"exit"
----@field stderr? string
+---@field stderr? string uv reports progress and planned changes on stderr
 
 ---@class PyDepsUvCommand
 ---@field cmd string[]
@@ -74,7 +76,9 @@ function M.resolve(opts)
     end
   end
 
-  local job_id = vim.fn.jobstart({ "uv", "lock" }, {
+  local cmd = { "uv", "lock" }
+  vim.list_extend(cmd, opts.args or {})
+  local job_id = vim.fn.jobstart(cmd, {
     cwd = cwd,
     stderr_buffered = true,
     on_stderr = function(_, data)
@@ -84,17 +88,13 @@ function M.resolve(opts)
     end,
     on_exit = function(self_id, code, _)
       jobs.untrack(self_id)
-      if code ~= 0 then
-        local err_msg = table.concat(stderr or {}, "\n"):gsub("^%s*(.-)%s*$", "%1")
-        finish({
-          ok = false,
-          code = code,
-          reason = "exit",
-          stderr = err_msg ~= "" and err_msg or nil,
-        })
-        return
-      end
-      finish({ ok = true, code = code })
+      local err_msg = table.concat(stderr or {}, "\n"):gsub("^%s*(.-)%s*$", "%1")
+      finish({
+        ok = code == 0,
+        code = code,
+        reason = code ~= 0 and "exit" or nil,
+        stderr = err_msg ~= "" and err_msg or nil,
+      })
     end,
   })
 
@@ -111,18 +111,20 @@ function M.resolve(opts)
 
   -- Set up timeout timer
   timer = uv.new_timer()
-  timer:start(UV_LOCK_TIMEOUT, 0, function()
-    if completed then
-      return
-    end
+  -- Report from the main loop: callers touch buffers, which a libuv
+  -- callback is not allowed to do.
+  timer:start(opts.timeout or UV_LOCK_TIMEOUT, 0, function()
     vim.schedule(function()
+      if completed then
+        return
+      end
+      finish({
+        ok = false,
+        code = -1,
+        reason = "timeout",
+      })
       vim.fn.jobstop(job_id)
     end)
-    finish({
-      ok = false,
-      code = -1,
-      reason = "timeout",
-    })
   end)
 end
 
