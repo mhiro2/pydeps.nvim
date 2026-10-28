@@ -9,20 +9,24 @@ if not ok_ts then
   ts_toml = nil
 end
 
+---Run `fn` on the pyproject buffer, or on a scratch copy of the file when no buffer is given.
+---@generic T
 ---@param path? string
 ---@param bufnr? integer
----@return PyDepsDependency[]
-function M.parse(path, bufnr)
+---@param fn fun(bufnr: integer): T
+---@param empty T Result when neither a buffer nor a readable file is available
+---@return T
+local function with_toml_buffer(path, bufnr, fn, empty)
   if not ts_toml or not ts_toml.is_available() then
     if not _notified_unavailable then
       vim.notify("pydeps: Tree-sitter TOML parser is required", vim.log.levels.ERROR)
       _notified_unavailable = true
     end
-    return {}
+    return empty
   end
 
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
-    return ts_toml.parse_buffer(bufnr)
+    return fn(bufnr)
   end
 
   if path and vim.fn.filereadable(path) == 1 then
@@ -30,12 +34,30 @@ function M.parse(path, bufnr)
     local content = vim.fn.readfile(path)
     vim.api.nvim_buf_set_lines(tmp, 0, -1, false, content)
     vim.bo[tmp].filetype = "toml"
-    local deps = ts_toml.parse_buffer(tmp)
+    local result = fn(tmp)
     vim.api.nvim_buf_delete(tmp, { force = true })
-    return deps
+    return result
   end
 
-  return {}
+  return empty
+end
+
+---@param path? string
+---@param bufnr? integer
+---@return PyDepsDependency[]
+function M.parse(path, bufnr)
+  return with_toml_buffer(path, bufnr, function(buf)
+    return ts_toml.parse_buffer(buf)
+  end, {})
+end
+
+---@param path? string
+---@param bufnr? integer
+---@return PyDepsSelectableSections
+function M.parse_sections(path, bufnr)
+  return with_toml_buffer(path, bufnr, function(buf)
+    return ts_toml.parse_sections(buf)
+  end, { extras = {}, groups = {}, includes = {} })
 end
 
 return M

@@ -150,14 +150,25 @@ T["render_lines renders an update built by dependency_view"] = function()
   MiniTest.expect.equality(value_of(lines, "status"), "update available")
 end
 
-T["render_lines shows inactive python suffix"] = function()
+T["render_lines explains an inactive dependency under its status"] = function()
   local lines = render({
-    current_env = { python_full_version = "3.11.8" },
+    current_env = { sys_platform = "darwin" },
     status_kind = "inactive",
     status_text = "inactive",
+    inactive_reasons = { 'sys_platform == "win32" is false (sys_platform is "darwin")' },
   })
 
-  MiniTest.expect.equality(table.concat(lines, "\n"):match("[^\n]*status[^\n]*%(python 3%.11%.8%)") ~= nil, true)
+  local status_index
+  for index, line in ipairs(lines) do
+    if line:match("status%s+inactive") then
+      status_index = index
+    end
+  end
+  MiniTest.expect.no_equality(status_index, nil)
+  MiniTest.expect.equality(
+    vim.trim(lines[status_index + 1]),
+    'sys_platform == "win32" is false (sys_platform is "darwin")'
+  )
 end
 
 T["render_lines shows dependency count and shortcuts when lock graph is available"] = function()

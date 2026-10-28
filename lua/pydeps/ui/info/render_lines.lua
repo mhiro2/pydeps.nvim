@@ -1,5 +1,6 @@
 local cache = require("pydeps.core.cache")
 local config = require("pydeps.config")
+local context = require("pydeps.core.context")
 local ui_shared = require("pydeps.ui.shared")
 local util = require("pydeps.util")
 
@@ -172,13 +173,16 @@ function M.build_lines(view, opts)
     table.insert(lines, format_line(ui_shared.icon_for("markers"), "markers", view.marker))
   end
 
-  local status_suffix = ""
+  table.insert(lines, format_line(ui_shared.icon_for("status"), "status", M.format_status_text(status)))
   if status.kind == "inactive" then
-    local runtime_env = view.current_env or {}
-    local python_ver = runtime_env.python_full_version or runtime_env.python_version or "unknown"
-    status_suffix = "(python " .. python_ver .. ")"
+    for _, reason in ipairs(view.inactive_reasons or {}) do
+      table.insert(lines, format_line("", "", reason))
+    end
   end
-  table.insert(lines, format_line(ui_shared.icon_for("status"), "status", M.format_status_text(status), status_suffix))
+
+  if root and next(context.overrides(root)) then
+    table.insert(lines, format_line(ui_shared.icon_for("context"), "context", context.summary(root, view.current_env)))
+  end
 
   local deps_count = get_deps_count(lock_data, dep.name)
   table.insert(lines, format_line(ui_shared.icon_for("deps"), "deps", tostring(deps_count), "(Enter: Why, gT: Tree)"))

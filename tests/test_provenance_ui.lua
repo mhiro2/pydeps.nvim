@@ -116,4 +116,43 @@ T["ui.provenance.show resumes hover close when output fails"] = function()
   end)
 end
 
+T["ui.provenance.show only follows roots the context keeps"] = function()
+  with_stubs(function()
+    local captured = nil
+    package.loaded["pydeps.ui.output"] = {
+      show = function(_, lines)
+        captured = lines
+      end,
+    }
+    package.loaded["pydeps.ui.info"] = { suspend_close = function() end, resume_close = function() end }
+    package.loaded["pydeps.ui.provenance"] = nil
+
+    local deps = {
+      { name = "requests", group = "project" },
+      { name = "pywin32", group = "project" },
+    }
+    require("pydeps.ui.provenance").show("pywin32", deps, {
+      requests = {},
+      pywin32 = {},
+    }, { active_deps = { deps[1] }, context = "python 3.13.1 · darwin · extras all · groups all" })
+
+    MiniTest.expect.equality(captured[1], "Target: pywin32")
+    MiniTest.expect.equality(captured[2], "Context: python 3.13.1 · darwin · extras all · groups all")
+    MiniTest.expect.equality(captured[3], "Direct: yes (inactive)")
+    MiniTest.expect.equality(captured[4], "No path from active roots.")
+
+    -- A package declared in an excluded extra and a selected group is labelled by the group.
+    local orm_deps = {
+      { name = "orm", group = "optional:postgres" },
+      { name = "orm", group = "group:test" },
+    }
+    require("pydeps.ui.provenance").show("orm", orm_deps, { orm = {} }, { active_deps = { orm_deps[2] } })
+    MiniTest.expect.equality(captured[2], "Direct: yes (group:test)")
+    MiniTest.expect.equality(vim.tbl_contains(captured, "  - orm [group:test]"), true)
+
+    require("pydeps.ui.provenance").show("orm", orm_deps, { orm = {} }, { active_deps = {} })
+    MiniTest.expect.equality(captured[2], "Direct: yes (optional:postgres, inactive)")
+  end)
+end
+
 return T

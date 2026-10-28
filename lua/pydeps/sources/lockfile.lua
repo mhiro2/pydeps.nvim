@@ -55,6 +55,16 @@ local function marker_active(expressions, env)
   return false
 end
 
+-- The project at the lock's root; its extras and groups are what a context selects.
+local function is_project_package(pkg)
+  return pkg.source and (pkg.source.editable == "." or pkg.source.virtual == ".")
+end
+
+-- An unset selection leaves every extra or group of the project enabled.
+local function selects(selection, name)
+  return selection == nil or vim.tbl_contains(selection, util.normalize_package_name(name))
+end
+
 local function compute_projection(data, env)
   local selected, resolved, ambiguous = {}, {}, {}
   local candidates = {}
@@ -73,7 +83,29 @@ local function compute_projection(data, env)
       ambiguous[name] = true
     end
   end
+  -- Only packages the project reaches may request extras, so an extra or group
+  -- left out of the context cannot enable edges further down. Without a
+  -- project package in the lock, every package counts as reached.
+  local reached, has_project = {}, false
+  for name, id in pairs(selected) do
+    if is_project_package(data.packages[id]) then
+      reached[name], has_project = true, true
+    end
+  end
   local graph, extras = {}, {}
+  local function enabled(edge, name, is_project)
+    if edge.kind == "runtime" then
+      return true
+    elseif edge.kind == "optional" then
+      return edge.group == env.extra
+        or (extras[name] and extras[name][edge.group])
+        or (is_project and selects(env.extras, edge.group))
+    elseif edge.kind == "dev" then
+      return edge.group == (env.dependency_group or env.group)
+        or (is_project and selects(env.dependency_groups, edge.group))
+    end
+    return false
+  end
   local changed = true
   while changed do
     changed = false
@@ -83,13 +115,13 @@ local function compute_projection(data, env)
       for _, child in ipairs(graph[name]) do
         seen[child] = true
       end
-      for _, edge in ipairs(data.packages[id].dependencies or {}) do
-        local enabled = edge.kind == "runtime"
-          or (edge.kind == "optional" and (edge.group == env.extra or (extras[name] and extras[name][edge.group])))
-          or (edge.kind == "dev" and edge.group == (env.dependency_group or env.group))
+      local pkg = data.packages[id]
+      local is_project = is_project_package(pkg)
+      local propagates = not has_project or reached[name]
+      for _, edge in ipairs(pkg.dependencies or {}) do
         local child = selected[edge.name] and data.packages[selected[edge.name]]
         if
-          enabled
+          enabled(edge, name, is_project)
           and child
           and matches(child, edge)
           and (not edge.marker or markers.evaluate(edge.marker, env) == true)
@@ -98,11 +130,17 @@ local function compute_projection(data, env)
             graph[name][#graph[name] + 1] = edge.name
             seen[edge.name] = true
           end
-          for _, extra in ipairs(edge.extra or {}) do
-            extras[edge.name] = extras[edge.name] or {}
-            if not extras[edge.name][extra] then
-              extras[edge.name][extra] = true
+          if propagates then
+            if has_project and not reached[edge.name] then
+              reached[edge.name] = true
               changed = true
+            end
+            for _, extra in ipairs(edge.extra or {}) do
+              extras[edge.name] = extras[edge.name] or {}
+              if not extras[edge.name][extra] then
+                extras[edge.name][extra] = true
+                changed = true
+              end
             end
           end
         end
