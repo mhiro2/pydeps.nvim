@@ -417,10 +417,10 @@ T["projections enable the project's extras and groups the context selects"] = fu
     'name = "app"',
     'version = "0.1.0"',
     'source = { editable = "." }',
-    'dependencies = [{ name = "base" }]',
+    'dependencies = [{ name = "base" }, { name = "orm" }]',
     "",
     "[package.optional-dependencies]",
-    'postgres = [{ name = "orm", extra = ["asyncio"] }]',
+    'postgres = [{ name = "adapter" }]',
     "",
     "[package.dev-dependencies]",
     'test = [{ name = "pytest" }]',
@@ -440,6 +440,12 @@ T["projections enable the project's extras and groups the context selects"] = fu
     'other = [{ name = "base" }]',
     "",
     "[[package]]",
+    'name = "adapter"',
+    'version = "1.0"',
+    'source = { registry = "https://pypi.org/simple" }',
+    'dependencies = [{ name = "orm", extra = ["asyncio"] }]',
+    "",
+    "[[package]]",
     'name = "greenlet"',
     'version = "3.0"',
     'source = { registry = "https://pypi.org/simple" }',
@@ -453,15 +459,16 @@ T["projections enable the project's extras and groups the context selects"] = fu
   -- Unfiltered, every extra and group of the project is followed, but other
   -- packages only enable the extras someone requests.
   local all = lockfile.project(data, {})
-  MiniTest.expect.equality(all.graph.app, { "base", "orm", "pytest" })
+  MiniTest.expect.equality(all.graph.app, { "adapter", "base", "orm", "pytest" })
   MiniTest.expect.equality(all.graph.orm, { "greenlet" })
 
+  -- An adapter the project no longer reaches cannot request orm's extra.
   local none = lockfile.project(data, { extras = {}, dependency_groups = {} })
-  MiniTest.expect.equality(none.graph.app, { "base" })
+  MiniTest.expect.equality(none.graph.app, { "base", "orm" })
   MiniTest.expect.equality(none.graph.orm, {})
 
   local selected = lockfile.project(data, { extras = { "postgres" }, dependency_groups = { "test" } })
-  MiniTest.expect.equality(selected.graph.app, { "base", "orm", "pytest" })
+  MiniTest.expect.equality(selected.graph.app, { "adapter", "base", "orm", "pytest" })
   MiniTest.expect.equality(selected.graph.orm, { "greenlet" })
 end
 

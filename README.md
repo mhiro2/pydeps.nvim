@@ -296,7 +296,7 @@ require("blink.cmp").setup({
 - `:PyDepsTree` — show dependency tree (uses `--frozen` by default)
   - `:PyDepsTree --resolve` skips frozen mode and attempts dependency resolution; this may update `uv.lock`, which is reported and refreshes open buffers
   - If the installed `uv` does not support `--frozen`, a warning is shown and the tree runs without it
-  - Context overrides are passed as `--python-version`, `--python-platform`, and `--no-default-groups --group ...`; `--universal` or explicit group options take precedence. `uv tree` has no extras filter
+  - The context is passed to `uv tree`: Python and platform overrides as `--python-version` / `--python-platform` (skipped with `--universal`), and groups as `--all-groups` while unfiltered or `--no-default-groups --group ...` once selected. Explicit group options replace the context's groups, and `uv tree` has no extras filter
 
 Run `:checkhealth pydeps` to verify your setup.
 

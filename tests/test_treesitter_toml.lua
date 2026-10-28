@@ -147,8 +147,8 @@ T["parse_sections lists extras, groups and included groups"] = function()
     "",
     "[dependency-groups]",
     'test = ["pytest"]',
-    'ci = [{ include-group = "test" }, "coverage", { include-group = "lint" }]',
-    "lint = []",
+    'ci = [{ include-group = "test" }, "coverage", { "include-group" = "lint" }]',
+    '"lint" = []',
   })
 
   MiniTest.expect.equality(ts_toml.parse_sections(bufnr), {
@@ -156,6 +156,13 @@ T["parse_sections lists extras, groups and included groups"] = function()
     groups = { "test", "ci", "lint" },
     includes = { test = {}, ci = { "test", "lint" }, lint = {} },
   })
+
+  -- A quoted table key is one literal key, not the optional-dependencies table.
+  local literal = toml_buffer({
+    '["project.optional-dependencies"]',
+    'test = ["requests"]',
+  })
+  MiniTest.expect.equality(ts_toml.parse_sections(literal), { extras = {}, groups = {}, includes = {} })
 end
 
 return T

@@ -22,26 +22,29 @@ local function add_if_supported(flag_name, uv_args, primary_args, fallback_args)
   return false
 end
 
--- Filter the tree for the shared context unless the command asks for the
--- universal tree or picks groups itself.
+-- Filter the tree for the shared context. The universal tree covers every
+-- Python and platform, and explicit group options replace the context's groups.
 ---@param tree_args PyDepsTreeArgs
 ---@param overrides PyDepsContextOverrides
 ---@param uv_args string[]
 local function add_context_args(tree_args, overrides, uv_args)
-  if tree_args.universal then
+  if not tree_args.universal then
+    if overrides.python then
+      add_if_supported("python_version", uv_args, { "--python-version", overrides.python })
+    end
+    if overrides.platform then
+      add_if_supported("python_platform", uv_args, { "--python-platform", overrides.platform })
+    end
+  end
+  if tree_args.all_groups or #tree_args.groups > 0 or #tree_args.no_groups > 0 then
     return
   end
-  if overrides.python then
-    add_if_supported("python_version", uv_args, { "--python-version", overrides.python })
-  end
-  if overrides.platform then
-    add_if_supported("python_platform", uv_args, { "--python-platform", overrides.platform })
-  end
-  if overrides.groups and not tree_args.all_groups and #tree_args.groups == 0 and #tree_args.no_groups == 0 then
-    if add_if_supported("no_default_groups", uv_args, { "--no-default-groups" }) then
-      for _, group in ipairs(overrides.groups) do
-        add_if_supported("group", uv_args, { "--group", group })
-      end
+  -- An unfiltered context includes every group, unlike uv's default groups.
+  if not overrides.groups then
+    add_if_supported("all_groups", uv_args, { "--all-groups" })
+  elseif add_if_supported("no_default_groups", uv_args, { "--no-default-groups" }) then
+    for _, group in ipairs(overrides.groups) do
+      add_if_supported("group", uv_args, { "--group", group })
     end
   end
 end

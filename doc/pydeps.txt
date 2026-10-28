@@ -262,10 +262,12 @@ pydeps.setup({opts})                                           *pydeps.setup()*
     If uv.lock is missing and frozen mode is active, a warning is shown
     suggesting to run :PyDepsResolve or use --resolve flag.
 
-    |:PyDepsContext| overrides are passed as `--python-version`,
-    `--python-platform`, and `--no-default-groups --group {name}`.
-    `--universal` skips them, and explicit group options replace the
-    context's groups. `uv tree` has no extras filter.
+    The |:PyDepsContext| context is passed to uv tree. Python and platform
+    overrides become `--python-version` and `--python-platform`, except
+    with `--universal`. Groups become `--all-groups` while unfiltered, so
+    the tree matches the other views rather than uv's default groups, and
+    `--no-default-groups --group {name}` once selected. Explicit group
+    options replace the context's groups. `uv tree` has no extras filter.
 
 ==============================================================================
 6. CONFIGURATION                                                *pydeps-config*

@@ -293,9 +293,15 @@ T["tree passes parsed options to uv tree"] = function()
     'dependencies = ["requests>=2"]',
   })
   local cases = {
-    { cmd = "PyDepsTree --reverse requests", args = { "--frozen", "--package", "requests", "--invert" } },
-    { cmd = "PyDepsTree --invert requests", args = { "--frozen", "--package", "requests", "--invert" } },
-    { cmd = "PyDepsTree! requests", args = { "--frozen", "--package", "requests", "--invert" } },
+    {
+      cmd = "PyDepsTree --reverse requests",
+      args = { "--frozen", "--package", "requests", "--invert", "--all-groups" },
+    },
+    {
+      cmd = "PyDepsTree --invert requests",
+      args = { "--frozen", "--package", "requests", "--invert", "--all-groups" },
+    },
+    { cmd = "PyDepsTree! requests", args = { "--frozen", "--package", "requests", "--invert", "--all-groups" } },
     {
       cmd = "PyDepsTree requests --depth 2 --universal --show-sizes --all-groups --group dev --no-group test",
       args = {
@@ -313,7 +319,7 @@ T["tree passes parsed options to uv tree"] = function()
         "test",
       },
     },
-    { cmd = "PyDepsTree --resolve", args = {} },
+    { cmd = "PyDepsTree --resolve", args = { "--all-groups" } },
   }
   local spy = stub_uv_tree()
   for _, case in ipairs(cases) do
@@ -355,7 +361,10 @@ T["tree filters for the shared context unless the command chooses itself"] = fun
         "test",
       },
     },
-    { cmd = "PyDepsTree --universal", args = { "--frozen", "--universal" } },
+    {
+      cmd = "PyDepsTree --universal",
+      args = { "--frozen", "--universal", "--no-default-groups", "--group", "test" },
+    },
     {
       cmd = "PyDepsTree --group dev",
       args = { "--frozen", "--group", "dev", "--python-version", "3.11", "--python-platform", "linux" },
@@ -367,6 +376,12 @@ T["tree filters for the shared context unless the command chooses itself"] = fun
     MiniTest.expect.equality(spy.runs[1].cmd, vim.list_extend({ "uv", "tree" }, case.args))
     MiniTest.expect.equality(realpath(spy.runs[1].cwd), realpath(dir))
   end
+
+  -- Unfiltered groups include every group rather than uv's default groups.
+  context.reset(root)
+  spy.runs = {}
+  vim.cmd("PyDepsTree")
+  MiniTest.expect.equality(spy.runs[1].cmd, { "uv", "tree", "--frozen", "--all-groups" })
 end
 
 T["tree warns on unknown options and still invokes uv tree"] = function()
@@ -380,7 +395,7 @@ T["tree warns on unknown options and still invokes uv tree"] = function()
   require("pydeps.commands").tree("--unknown requests", false, {})
 
   MiniTest.expect.equality(notified(captured, "unknown tree options: %-%-unknown"), true)
-  MiniTest.expect.equality(spy.runs[1].cmd, { "uv", "tree", "--frozen", "--package", "requests" })
+  MiniTest.expect.equality(spy.runs[1].cmd, { "uv", "tree", "--frozen", "--package", "requests", "--all-groups" })
 end
 
 T["tree drops flags the installed uv does not support"] = function()
@@ -395,7 +410,7 @@ T["tree drops flags the installed uv does not support"] = function()
 
   MiniTest.expect.equality(notified(captured, "%-%-invert not supported"), true)
   -- Without --package the target is passed positionally.
-  MiniTest.expect.equality(spy.runs[1].cmd, { "uv", "tree", "--frozen", "requests", "--depth", "1" })
+  MiniTest.expect.equality(spy.runs[1].cmd, { "uv", "tree", "--frozen", "requests", "--depth", "1", "--all-groups" })
 end
 
 T["tree warns when uv cannot run frozen"] = function()
@@ -410,7 +425,7 @@ T["tree warns when uv cannot run frozen"] = function()
 
   MiniTest.expect.equality(notified(captured, "%-%-frozen not supported"), true)
   MiniTest.expect.equality(vim.tbl_contains(captured.levels, vim.log.levels.WARN), true)
-  MiniTest.expect.equality(spy.runs[1].cmd, { "uv", "tree", "--package", "requests" })
+  MiniTest.expect.equality(spy.runs[1].cmd, { "uv", "tree", "--package", "requests", "--all-groups" })
   MiniTest.expect.equality(type(spy.runs[1].on_exit), "function")
 end
 

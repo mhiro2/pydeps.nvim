@@ -36,6 +36,21 @@ local function find_key_node(node)
   return nil
 end
 
+---Key text with a quoted key decoded, so `"test" = [...]` names the group `test`.
+---@param bufnr integer
+---@param key_node table
+---@return string
+local function key_text(bufnr, key_node)
+  local text = vim.treesitter.get_node_text(key_node, bufnr)
+  if key_node:type() == "quoted_key" then
+    local decoded = lock_value.parse(text)
+    if type(decoded) == "string" then
+      return decoded
+    end
+  end
+  return text
+end
+
 ---@param node table
 ---@return table|nil, table|nil
 local function find_pair_key_and_array(node)
@@ -85,10 +100,9 @@ local function array_section(bufnr, array_node)
   if not key_node or not table_key_node or value_node ~= array_node then
     return nil
   end
-  return dependency_section(
-    vim.treesitter.get_node_text(table_key_node, bufnr),
-    vim.treesitter.get_node_text(key_node, bufnr)
-  )
+  -- The table path stays as written: decoding `["project.optional-dependencies"]`
+  -- would turn one quoted key into the nested table path.
+  return dependency_section(vim.treesitter.get_node_text(table_key_node, bufnr), key_text(bufnr, key_node))
 end
 
 ---Call `fn` for every dependency array in the document.
@@ -270,7 +284,7 @@ local function included_group(bufnr, inline_table)
           value_node = child
         end
       end
-      if key_node and value_node and vim.treesitter.get_node_text(key_node, bufnr) == "include-group" then
+      if key_node and value_node and key_text(bufnr, key_node) == "include-group" then
         local value = lock_value.parse(vim.treesitter.get_node_text(value_node, bufnr))
         return type(value) == "string" and value or nil
       end
