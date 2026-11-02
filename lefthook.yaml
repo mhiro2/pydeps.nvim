@@ -5,6 +5,9 @@ output:
 pre-commit:
   parallel: true
   commands:
+    actions-lock:
+      glob: ".github/workflows/*"
+      run: gh actions-lock --verify-local
     selene:
       glob: "{lua,plugin,tests}/**/*.lua"
       run: selene {staged_files}
