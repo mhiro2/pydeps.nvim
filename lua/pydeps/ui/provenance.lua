@@ -62,16 +62,22 @@ end
 ---@param root_labels table<string, string>
 ---@param reachable table<string, boolean>
 ---@param graph table<string, string[]>
+---@param opts PyDepsProvenanceOptions
 ---@return string[]
-local function build_lines(target, roots, root_labels, reachable, graph)
+local function build_lines(target, roots, root_labels, reachable, graph, opts)
   local lines = { "Target: " .. target }
-  local direct_label = root_labels[target]
+  if opts.context then
+    table.insert(lines, "Context: " .. opts.context)
+  end
+  -- A target the context drops is still reported as declared, with the
+  -- section it is declared in.
+  local inactive = not root_labels[target] and opts.declared_labels[target]
+  local direct_label = root_labels[target] or inactive
   if direct_label then
-    if direct_label ~= "project" then
-      table.insert(lines, ("Direct: yes (%s)"):format(direct_label))
-    else
-      table.insert(lines, "Direct: yes")
-    end
+    local details = vim.tbl_filter(function(part)
+      return part ~= nil
+    end, { direct_label ~= "project" and direct_label or nil, inactive and "inactive" or nil })
+    table.insert(lines, #details > 0 and ("Direct: yes (%s)"):format(table.concat(details, ", ")) or "Direct: yes")
   else
     table.insert(lines, "Direct: no")
   end
@@ -140,14 +146,24 @@ local function build_lines(target, roots, root_labels, reachable, graph)
   return lines
 end
 
+---@class PyDepsProvenanceOptions
+---@field active_deps? PyDepsDependency[] Declared dependencies the context keeps; defaults to all of `deps`
+---@field context? string Description of the context the graph was projected for
+---@field declared_labels? table<string, string> Section labels of every declaration, filled in by `show`
+
 ---@param target string
 ---@param deps PyDepsDependency[]
 ---@param graph table<string, string[]>
+---@param opts? PyDepsProvenanceOptions
 ---@return boolean?, string?
-function M.show(target, deps, graph)
-  local roots, root_labels = collect_roots(deps)
+function M.show(target, deps, graph, opts)
+  local _, declared_labels = collect_roots(deps)
+  opts = vim.tbl_extend("force", { declared_labels = declared_labels }, opts or {})
+  -- Label roots by the declarations the context keeps, so a package declared
+  -- in both an excluded extra and a selected group is shown under the group.
+  local roots, root_labels = collect_roots(opts.active_deps or deps)
   local reachable = provenance.roots_reaching_target(graph, roots, target)
-  local lines = build_lines(target, roots, root_labels, reachable, graph)
+  local lines = build_lines(target, roots, root_labels, reachable, graph, opts)
 
   info.suspend_close()
   local ok, err = pcall(output.show, "PyDeps Why: " .. target, lines, {

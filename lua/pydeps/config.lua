@@ -49,6 +49,7 @@
 ---@field latest string
 ---@field extras string
 ---@field markers string
+---@field context string
 ---@field status string
 ---@field deps string
 ---@field pypi string
@@ -104,6 +105,7 @@ M.defaults = {
       latest = "",
       extras = "",
       markers = "󰍶",
+      context = "",
       status = "",
       deps = "",
       pypi = "󰌠",
@@ -248,6 +250,7 @@ add_specs(ui_icon_specs, {
   "latest",
   "extras",
   "markers",
+  "context",
   "status",
   "deps",
   "pypi",

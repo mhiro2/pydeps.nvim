@@ -327,7 +327,7 @@ local function cursor_hover_context()
   local lockfile_loading = false
   if root then
     local lock_data, missing, loading = cache.get_lockfile(root)
-    resolved = lockfile.project(lock_data, require("pydeps.core.env").get(root)).resolved
+    resolved = lockfile.project(lock_data, require("pydeps.core.context").env(root)).resolved
     missing_lockfile = missing
     lockfile_loading = loading
     if loading then

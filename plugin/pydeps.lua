@@ -25,3 +25,12 @@ end, {})
 vim.api.nvim_create_user_command("PyDepsAudit", function()
   require("pydeps.commands").audit()
 end, {})
+
+vim.api.nvim_create_user_command("PyDepsContext", function(opts)
+  require("pydeps.commands").context(opts.fargs)
+end, {
+  nargs = "*",
+  complete = function(arglead, cmdline)
+    return require("pydeps.commands").complete_context(arglead, cmdline)
+  end,
+})

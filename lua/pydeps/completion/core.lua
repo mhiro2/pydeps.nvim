@@ -65,7 +65,7 @@ local function local_package_names(bufnr)
   local resolved = {}
   if root then
     local lock_data = cache.get_lockfile(root)
-    resolved = lockfile.project(lock_data, require("pydeps.core.env").get(root)).resolved
+    resolved = lockfile.project(lock_data, require("pydeps.core.context").env(root)).resolved
   end
   for name in pairs(resolved) do
     table.insert(names, name)
@@ -141,7 +141,7 @@ local function marker_value_candidates(bufnr, field)
     return collect_local_groups(bufnr, "group:"), "marker group", "local"
   end
   local values = vim.list_extend({}, marker_values[field] or {})
-  local current = require("pydeps.core.env").get(project.find_root(bufnr))[field]
+  local current = require("pydeps.core.context").env(project.find_root(bufnr))[field]
   if type(current) == "string" then
     values[#values + 1] = current
   end

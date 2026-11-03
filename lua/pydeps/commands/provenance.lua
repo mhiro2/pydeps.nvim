@@ -1,5 +1,7 @@
 local buffer_context = require("pydeps.core.buffer_context")
 local cache = require("pydeps.core.cache")
+local context = require("pydeps.core.context")
+local status = require("pydeps.ui.status")
 local provenance_ui = require("pydeps.ui.provenance")
 
 local M = {}
@@ -42,8 +44,16 @@ function M.run(target)
     return
   end
 
-  local projection = require("pydeps.sources.lockfile").project(lock_data, require("pydeps.core.env").get(root))
-  local ok, err = provenance_ui.show(dep.name, deps, projection.graph)
+  local current_env = context.env(root)
+  local projection = require("pydeps.sources.lockfile").project(lock_data, current_env)
+  -- Only dependencies the context keeps can pull the target in.
+  local active_deps = vim.tbl_filter(function(entry)
+    return status.is_active(entry, current_env) ~= false
+  end, deps)
+  local ok, err = provenance_ui.show(dep.name, deps, projection.graph, {
+    active_deps = active_deps,
+    context = next(context.overrides(root)) and context.summary(root, current_env) or nil,
+  })
   if not ok then
     vim.notify(string.format("pydeps: failed to show provenance: %s", err or "unknown error"), vim.log.levels.ERROR)
   end

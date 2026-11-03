@@ -11,6 +11,7 @@ local info_labels = {
   "latest",
   "extras",
   "markers",
+  "context",
   "status",
   "deps",
   "pypi",

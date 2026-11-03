@@ -36,6 +36,21 @@ local function find_key_node(node)
   return nil
 end
 
+---Key text with a quoted key decoded, so `"test" = [...]` names the group `test`.
+---@param bufnr integer
+---@param key_node table
+---@return string
+local function key_text(bufnr, key_node)
+  local text = vim.treesitter.get_node_text(key_node, bufnr)
+  if key_node:type() == "quoted_key" then
+    local decoded = lock_value.parse(text)
+    if type(decoded) == "string" then
+      return decoded
+    end
+  end
+  return text
+end
+
 ---@param node table
 ---@return table|nil, table|nil
 local function find_pair_key_and_array(node)
@@ -85,10 +100,9 @@ local function array_section(bufnr, array_node)
   if not key_node or not table_key_node or value_node ~= array_node then
     return nil
   end
-  return dependency_section(
-    vim.treesitter.get_node_text(table_key_node, bufnr),
-    vim.treesitter.get_node_text(key_node, bufnr)
-  )
+  -- The table path stays as written: decoding `["project.optional-dependencies"]`
+  -- would turn one quoted key into the nested table path.
+  return dependency_section(vim.treesitter.get_node_text(table_key_node, bufnr), key_text(bufnr, key_node))
 end
 
 ---Call `fn` for every dependency array in the document.
@@ -255,6 +269,65 @@ function M.parse_buffer(bufnr)
   end)
 
   return deps
+end
+
+---Value of an inline table's `include-group` key, decoded from its string literal.
+---@param bufnr integer
+---@param inline_table table Tree-sitter node
+---@return string|nil
+local function included_group(bufnr, inline_table)
+  for pair in inline_table:iter_children() do
+    if pair:type() == "pair" then
+      local key_node, value_node = find_key_node(pair), nil
+      for child in pair:iter_children() do
+        if child:type() == "string" then
+          value_node = child
+        end
+      end
+      if key_node and value_node and key_text(bufnr, key_node) == "include-group" then
+        local value = lock_value.parse(vim.treesitter.get_node_text(value_node, bufnr))
+        return type(value) == "string" and value or nil
+      end
+    end
+  end
+  return nil
+end
+
+---@class PyDepsSelectableSections
+---@field extras string[] Optional dependency names in declaration order
+---@field groups string[] Dependency group names in declaration order
+---@field includes table<string, string[]> Groups each dependency group includes via `include-group`
+
+---Collect the extras and dependency groups a project declares, including empty ones.
+---@param bufnr integer
+---@return PyDepsSelectableSections
+function M.parse_sections(bufnr)
+  local result = { extras = {}, groups = {}, includes = {} }
+  local parser = get_parser(bufnr)
+  local tree = parser and parser:parse()[1]
+  if not tree then
+    return result
+  end
+
+  each_dependency_array(bufnr, tree:root(), function(section, array_node)
+    local extra = section:match("^optional:(.+)$")
+    local group = section:match("^group:(.+)$")
+    if extra then
+      table.insert(result.extras, extra)
+    elseif group then
+      table.insert(result.groups, group)
+      local includes = {}
+      for child in array_node:iter_children() do
+        local included = child:type() == "inline_table" and included_group(bufnr, child)
+        if included then
+          table.insert(includes, included)
+        end
+      end
+      result.includes[group] = includes
+    end
+  end)
+
+  return result
 end
 
 ---Get dependency array ranges (dependencies / optional-dependencies / dependency-groups)

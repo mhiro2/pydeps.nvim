@@ -180,6 +180,9 @@ function M.detect_tree_features(cb)
       no_group = stdout:match("%-%-no%-group") ~= nil,
       package = stdout:match("%-%-package") ~= nil,
       frozen = stdout:match("%-%-frozen") ~= nil,
+      python_version = stdout:match("%-%-python%-version") ~= nil,
+      python_platform = stdout:match("%-%-python%-platform") ~= nil,
+      no_default_groups = stdout:match("%-%-no%-default%-groups") ~= nil,
     }
     features_cached = true
     features_pending = false

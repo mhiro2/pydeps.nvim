@@ -1,5 +1,5 @@
 local config = require("pydeps.config")
-local env = require("pydeps.core.env")
+local context = require("pydeps.core.context")
 local jobs = require("pydeps.core.jobs")
 local project = require("pydeps.core.project")
 local dependency_view = require("pydeps.ui.dependency_view")
@@ -538,7 +538,7 @@ function M.render(bufnr, deps, resolved, opts)
   M.clear(bufnr)
 
   local root = project.find_root(bufnr)
-  local current_env = env.get(root)
+  local current_env = context.env(root)
   local lockfile_missing = opts and opts.lockfile_missing or false
   local lockfile_loading = opts and opts.lockfile_loading or false
   local skip_fetch = opts and opts.skip_fetch or false

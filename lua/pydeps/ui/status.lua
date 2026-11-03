@@ -1,3 +1,4 @@
+local env_context = require("pydeps.core.context")
 local markers = require("pydeps.core.markers")
 local ui_shared = require("pydeps.ui.shared")
 
@@ -50,6 +51,9 @@ end
 ---@return boolean?
 ---@return "invalid"|"unknown"|"pending"?
 function M.is_active(dep, current_env)
+  if env_context.excluded_reason(dep, current_env) then
+    return false
+  end
   local marker = ui_shared.extract_marker(dep.spec)
   if not marker then
     return true
